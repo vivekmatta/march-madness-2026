@@ -1,0 +1,1991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>March Madness 2026 — Bracket Predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+/* =========================================================
+   RESET & ROOT VARIABLES
+   ========================================================= */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:          #0d1117;
+  --surface:     #111827;
+  --card:        #1a2744;
+  --card-hover:  #1f3060;
+  --card-border: #2a3f6a;
+  --gold:        #d4a017;
+  --gold-light:  #e8be3a;
+  --gold-glow:   rgba(212,160,23,0.25);
+  --correct:     #2d6a4f;
+  --correct-glow:rgba(45,106,79,0.3);
+  --wrong:       #8b1a1a;
+  --wrong-glow:  rgba(139,26,26,0.3);
+  --text:        #e2e8f0;
+  --text-dim:    #8a9bb5;
+  --text-muted:  #4a5a7a;
+  --ff-bg:       #0e1b33;
+  --divider:     #1e2e4a;
+}
+
+/* =========================================================
+   BASE
+   ========================================================= */
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  min-height: 100vh;
+  overflow-x: auto;
+}
+::selection { background: var(--gold); color: #000; }
+
+/* =========================================================
+   SCROLLBAR
+   ========================================================= */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #2a3a5a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
+/* =========================================================
+   LOADING OVERLAY
+   ========================================================= */
+#loading-overlay {
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse at center, #0d1a35 0%, #060b14 100%);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 9999; gap: 20px;
+  transition: opacity 0.6s ease;
+}
+#loading-overlay .logo-text {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.4rem; font-weight: 900;
+  color: var(--gold);
+  text-shadow: 0 0 40px rgba(212,160,23,0.4);
+  letter-spacing: 0.02em;
+}
+#loading-overlay .logo-sub {
+  font-size: 0.8rem; color: var(--text-dim);
+  letter-spacing: 0.15em; text-transform: uppercase;
+  margin-top: -10px;
+}
+#loading-bar-wrap {
+  width: 360px; height: 4px;
+  background: #1a2744; border-radius: 2px;
+  overflow: hidden;
+}
+#loading-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #b87c10, var(--gold), var(--gold-light));
+  border-radius: 2px;
+  transition: width 0.35s cubic-bezier(0.4,0,0.2,1);
+}
+#loading-status { color: var(--text-dim); font-size: 0.75rem; min-height: 20px; }
+#loading-warn {
+  color: #ff9966; font-size: 0.75rem;
+  max-width: 420px; text-align: center;
+  background: rgba(139,26,26,0.2);
+  border: 1px solid rgba(139,26,26,0.4);
+  border-radius: 8px; padding: 10px 14px;
+  display: none;
+}
+#loading-items {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 160px; overflow-y: auto;
+  width: 360px;
+}
+.load-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.7rem; color: var(--text-muted);
+  transition: color 0.3s;
+}
+.load-item.done { color: var(--text-dim); }
+.load-item.done .li-icon { color: #5adc9a; }
+.load-item.error { color: #ff7070; }
+.li-icon { width: 12px; font-size: 0.65rem; }
+
+/* =========================================================
+   HEADER
+   ========================================================= */
+#header {
+  background: linear-gradient(135deg, #0a1628 0%, #1a2744 100%);
+  border-bottom: 2px solid var(--gold);
+  padding: 14px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  position: sticky; top: 0; z-index: 200;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+}
+.hdr-brand h1 {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.5rem; font-weight: 900;
+  background: linear-gradient(135deg, var(--gold), var(--gold-light));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+.hdr-brand p {
+  color: var(--text-dim); font-size: 0.68rem;
+  margin-top: 4px; letter-spacing: 0.05em;
+}
+.hdr-brand p span { color: var(--gold); }
+
+.hdr-stats {
+  display: flex; gap: 24px;
+  padding: 0 16px;
+  border-left: 1px solid var(--divider);
+  border-right: 1px solid var(--divider);
+  flex-wrap: wrap;
+}
+.stat-box { text-align: center; }
+.stat-val {
+  font-size: 1.6rem; font-weight: 600;
+  line-height: 1; color: var(--gold);
+  font-family: 'Playfair Display', serif;
+}
+.stat-val.correct-color { color: #5adc9a; }
+.stat-val.wrong-color { color: #ff7070; }
+.stat-lbl {
+  font-size: 0.6rem; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-top: 2px;
+}
+.hdr-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 6px;
+  border: 1px solid var(--card-border);
+  background: var(--card); color: var(--text);
+  cursor: pointer; font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem; font-weight: 600;
+  transition: all 0.18s ease; white-space: nowrap;
+  text-decoration: none; outline: none;
+}
+.btn:hover { background: var(--card-hover); border-color: var(--gold); color: var(--gold); }
+.btn.btn-primary { background: var(--gold); color: #0d1117; border-color: var(--gold); }
+.btn.btn-primary:hover { background: var(--gold-light); }
+.btn.btn-danger { border-color: #8b1a1a; color: #ff7070; }
+.btn.btn-danger:hover { background: #8b1a1a; color: #fff; border-color: #8b1a1a; }
+.btn.btn-sm { padding: 4px 8px; font-size: 0.65rem; }
+
+/* =========================================================
+   FIRST FOUR SECTION
+   ========================================================= */
+#first-four-section {
+  background: var(--ff-bg);
+  border-bottom: 1px solid var(--divider);
+  padding: 10px 20px;
+  display: flex; align-items: center; gap: 12px;
+  flex-wrap: wrap;
+}
+.ff-label {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.8rem; font-weight: 700;
+  color: var(--gold); letter-spacing: 0.1em;
+  text-transform: uppercase; min-width: 90px;
+  white-space: nowrap;
+}
+.ff-sublabel {
+  font-size: 0.65rem; color: var(--text-muted);
+  display: block; font-family: 'IBM Plex Mono', monospace;
+  font-weight: 400; letter-spacing: 0;
+}
+#ff-cards { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.ff-info {
+  font-size: 0.65rem; color: var(--text-muted);
+  border-left: 1px solid var(--divider); padding-left: 12px;
+}
+.ff-info b { color: var(--text-dim); }
+
+/* =========================================================
+   BRACKET CONTAINER
+   ========================================================= */
+#bracket-scroll {
+  padding: 16px 12px;
+  min-width: 1480px;
+}
+#bracket-wrap {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  gap: 0;
+}
+#connector-svg {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: visible;
+}
+
+/* =========================================================
+   REGION & COLUMN LAYOUT
+   ========================================================= */
+.bracket-half {
+  display: flex;
+  flex-direction: column;
+}
+.region-wrapper {
+  display: flex;
+  height: 512px;
+  position: relative;
+}
+.region-label-strip {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-family: 'Playfair Display', serif;
+  font-size: 0.7rem; font-weight: 700;
+  color: var(--gold); letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0 2px;
+  opacity: 0.6;
+  display: flex; align-items: center; justify-content: center;
+  min-width: 16px;
+}
+.region-label-strip.right-label {
+  transform: none;
+  writing-mode: vertical-lr;
+}
+.round-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  align-items: center;
+  width: 156px;
+  height: 512px;
+  flex-shrink: 0;
+}
+.round-col.col-e8 { width: 156px; }
+
+/* =========================================================
+   CENTER COLUMN (Final Four + Championship)
+   ========================================================= */
+#center-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 208px;
+  flex-shrink: 0;
+  padding: 8px 4px;
+  gap: 0;
+  position: relative;
+}
+.center-label {
+  font-size: 0.6rem; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  text-align: center; padding: 6px 0;
+  font-weight: 600;
+}
+.center-spacer { flex: 1; min-height: 12px; }
+
+/* =========================================================
+   GAME CARD
+   ========================================================= */
+.game-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  width: 100%;
+  position: relative;
+}
+.game-card {
+  width: 144px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+  position: relative;
+  animation: revealCard 0.35s ease both;
+  cursor: default;
+}
+.game-card:hover {
+  border-color: rgba(212,160,23,0.5);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.5);
+  transform: translateY(-1px);
+  z-index: 20;
+}
+.game-card.state-correct {
+  border-color: var(--correct);
+  box-shadow: 0 0 8px var(--correct-glow);
+  background: linear-gradient(160deg, #1a2744 0%, #162c22 100%);
+}
+.game-card.state-wrong {
+  border-color: var(--wrong);
+  box-shadow: 0 0 8px var(--wrong-glow);
+  background: linear-gradient(160deg, #1a2744 0%, #1e1010 100%);
+}
+.game-card.card-ff { width: 168px; }
+.game-card.card-f4 { width: 176px; }
+.game-card.card-champ {
+  width: 192px;
+  border-color: var(--gold);
+  box-shadow: 0 0 20px var(--gold-glow), inset 0 0 20px rgba(212,160,23,0.04);
+}
+
+/* Team row */
+.team-row {
+  display: flex; align-items: center;
+  padding: 4px 6px; gap: 4px;
+  min-height: 22px;
+  position: relative;
+  transition: background 0.2s;
+}
+.team-row.row-winner {
+  background: linear-gradient(90deg, rgba(212,160,23,0.13), rgba(212,160,23,0.04));
+}
+.team-row.row-winner .team-name { color: var(--gold); }
+.team-row.row-tbd .team-name { color: var(--text-muted); font-style: italic; }
+.team-row.row-tbd .seed-num { opacity: 0.3; }
+
+.seed-num {
+  flex-shrink: 0;
+  background: #1e3060;
+  color: var(--text-dim);
+  font-size: 0.58rem; font-weight: 600;
+  width: 18px; height: 18px;
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.team-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.62rem; font-weight: 700;
+  flex: 1;
+  white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  line-height: 1.2;
+}
+.team-prob {
+  flex-shrink: 0;
+  font-size: 0.57rem; color: var(--text-muted);
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  transition: color 0.2s;
+}
+.team-row.row-winner .team-prob { color: rgba(212,160,23,0.7); }
+
+/* Probability bar */
+.prob-bar-wrap {
+  height: 3px;
+  background: #1e2e4a;
+  position: relative;
+  overflow: hidden;
+}
+.prob-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a07010, var(--gold), var(--gold-light));
+  transition: width 0.7s cubic-bezier(0.4,0,0.2,1);
+  min-width: 1px;
+}
+
+/* Divider between teams */
+.teams-divider { height: 1px; background: var(--divider); }
+
+/* Card footer: action buttons or status */
+.card-footer {
+  border-top: 1px solid var(--divider);
+}
+.card-actions {
+  display: flex;
+}
+.card-act-btn {
+  flex: 1; padding: 3px 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.55rem; font-weight: 600;
+  cursor: pointer; border: none;
+  transition: background 0.15s, color 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 2px;
+}
+.btn-correct-act {
+  background: rgba(45,106,79,0.2); color: #4acc88;
+  border-right: 1px solid var(--divider);
+}
+.btn-correct-act:hover { background: var(--correct); color: #fff; }
+.btn-wrong-act { background: rgba(139,26,26,0.2); color: #e06060; }
+.btn-wrong-act:hover { background: var(--wrong); color: #fff; }
+.card-status-line {
+  padding: 3px 6px;
+  font-size: 0.58rem; font-weight: 600;
+  text-align: center; letter-spacing: 0.04em;
+}
+.card-status-line.status-correct { color: #4acc88; background: rgba(45,106,79,0.15); }
+.card-status-line.status-wrong { color: #e06060; background: rgba(139,26,26,0.15); }
+
+/* Champion banner inside champ card */
+.champ-banner {
+  text-align: center;
+  padding: 3px;
+  font-size: 0.58rem;
+  color: var(--gold);
+  background: rgba(212,160,23,0.08);
+  border-bottom: 1px solid rgba(212,160,23,0.2);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* =========================================================
+   MODAL
+   ========================================================= */
+#modal-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(5,10,20,0.8);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  align-items: center; justify-content: center;
+}
+#modal-backdrop.open { display: flex; }
+#modal-box {
+  background: #0f1e3a;
+  border: 1px solid rgba(212,160,23,0.4);
+  border-radius: 14px;
+  padding: 24px;
+  width: 360px; max-width: 94vw;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+  animation: modalIn 0.22s ease;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.93) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+#modal-box h3 {
+  font-family: 'Playfair Display', serif;
+  color: var(--gold); font-size: 1.2rem;
+  margin-bottom: 6px;
+}
+#modal-desc { color: var(--text-dim); font-size: 0.78rem; margin-bottom: 18px; }
+#modal-teams { display: flex; flex-direction: column; gap: 10px; }
+.modal-pick-btn {
+  padding: 13px 16px;
+  background: #111f38;
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  cursor: pointer; color: var(--text);
+  font-family: 'Playfair Display', serif;
+  font-size: 1rem; font-weight: 700;
+  transition: all 0.18s; text-align: left;
+  display: flex; align-items: center; gap: 12px;
+}
+.modal-pick-btn:hover {
+  background: var(--gold); color: #000;
+  border-color: var(--gold);
+  transform: translateX(3px);
+}
+.modal-seed-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem; font-weight: 400;
+  opacity: 0.7;
+  background: #1a2744; border-radius: 4px;
+  padding: 2px 5px; flex-shrink: 0;
+}
+.modal-pick-btn:hover .modal-seed-badge { background: rgba(0,0,0,0.2); opacity: 1; }
+#modal-cancel-btn {
+  margin-top: 14px; width: 100%;
+  padding: 9px; background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 7px; color: var(--text-muted);
+  cursor: pointer; font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.78rem; transition: all 0.18s;
+}
+#modal-cancel-btn:hover { border-color: var(--text-dim); color: var(--text); }
+
+/* =========================================================
+   INFO PANEL (shows on card hover — tooltip)
+   ========================================================= */
+#tooltip {
+  position: fixed;
+  background: #0a1628;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  pointer-events: none;
+  z-index: 500;
+  font-size: 0.7rem;
+  max-width: 220px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  display: none;
+  line-height: 1.6;
+}
+#tooltip .tt-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.85rem; color: var(--gold);
+  font-weight: 700; margin-bottom: 6px;
+}
+#tooltip .tt-row { display: flex; justify-content: space-between; gap: 16px; }
+#tooltip .tt-label { color: var(--text-muted); }
+#tooltip .tt-val { color: var(--text); font-weight: 600; }
+
+/* =========================================================
+   ANIMATIONS
+   ========================================================= */
+@keyframes revealCard {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes winnerPulse {
+  0%   { box-shadow: 0 0 0 0 var(--gold-glow); }
+  50%  { box-shadow: 0 0 0 5px rgba(212,160,23,0); }
+  100% { box-shadow: 0 0 0 0 rgba(212,160,23,0); }
+}
+.animate-win { animation: winnerPulse 0.9s ease 0s 2; }
+
+/* =========================================================
+   PRINT
+   ========================================================= */
+@media print {
+  #loading-overlay, #modal-backdrop, .card-footer,
+  #header .hdr-actions, #first-four-section .ff-info { display: none !important; }
+  body { background: #fff; color: #000; }
+  #header { background: #f5f5f5; border-bottom: 2px solid #c0a010; position: static; }
+  .hdr-brand h1 { -webkit-text-fill-color: #c0a010; color: #c0a010; }
+  .game-card { border: 1px solid #ddd; background: #fafafa !important; box-shadow: none !important; }
+  .team-name, .team-prob, .stat-val, .stat-lbl { color: #000 !important; -webkit-text-fill-color: #000; }
+  .seed-num { background: #eee; color: #333; }
+  .team-row.row-winner { background: #fff9e6 !important; }
+  #connector-svg line { stroke: #bbb !important; }
+  #bracket-scroll { padding: 8px; min-width: unset; overflow: visible; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     LOADING OVERLAY
+     ============================================================ -->
+<div id="loading-overlay">
+  <div class="logo-text">March Madness 2026</div>
+  <div class="logo-sub">AI-Powered Bracket Prediction</div>
+  <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+  <div id="loading-status">Initializing…</div>
+  <div id="loading-items"></div>
+  <div id="loading-warn">
+    ⚠ Could not load CSV data files. If opening from the filesystem, please serve with:<br>
+    <code>python3 -m http.server 8080</code> then visit <code>http://localhost:8080/bracket.html</code>
+  </div>
+</div>
+
+<!-- ============================================================
+     HEADER
+     ============================================================ -->
+<header id="header">
+  <div class="hdr-brand">
+    <h1>March Madness 2026</h1>
+    <p>Gradient Descent Logistic Regression · <span>10 Data Sources</span> · 2016–2025 Training</p>
+  </div>
+  <div class="hdr-stats">
+    <div class="stat-box">
+      <div class="stat-val correct-color" id="stat-correct">0</div>
+      <div class="stat-lbl">Correct</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val wrong-color" id="stat-wrong">0</div>
+      <div class="stat-lbl">Wrong</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-pending">63</div>
+      <div class="stat-lbl">Pending</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-accuracy">—</div>
+      <div class="stat-lbl">Accuracy</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="stat-model">—</div>
+      <div class="stat-lbl">Training Ex.</div>
+    </div>
+  </div>
+  <div class="hdr-actions">
+    <button class="btn btn-primary" id="btn-predict-all" onclick="predictAll()">⚡ Predict All</button>
+    <button class="btn" id="btn-reset" onclick="resetBracket()">↺ Reset</button>
+    <button class="btn" onclick="window.print()">⎙ Export PDF</button>
+  </div>
+</header>
+
+<!-- ============================================================
+     FIRST FOUR
+     ============================================================ -->
+<div id="first-four-section">
+  <div>
+    <div class="ff-label">
+      First Four
+      <span class="ff-sublabel">Play-in games · Winners advance to R64</span>
+    </div>
+  </div>
+  <div id="ff-cards"></div>
+  <div class="ff-info">
+    <b>ff1</b> → Midwest 1-slot &nbsp;|&nbsp;
+    <b>ff2</b> → West 5-slot &nbsp;|&nbsp;
+    <b>ff3</b> → South 1-slot &nbsp;|&nbsp;
+    <b>ff4</b> → Midwest 5-slot
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN BRACKET
+     ============================================================ -->
+<div id="bracket-scroll">
+  <div id="bracket-wrap">
+    <svg id="connector-svg"></svg>
+
+    <!-- LEFT HALF: East (top) + South (bottom) -->
+    <div class="bracket-half" id="left-half">
+
+      <!-- EAST REGION -->
+      <div class="region-wrapper" id="east-wrapper">
+        <div class="region-label-strip">EAST</div>
+        <div class="round-col" id="e-r64"></div>
+        <div class="round-col" id="e-r32"></div>
+        <div class="round-col" id="e-s16"></div>
+        <div class="round-col col-e8" id="e-e8"></div>
+      </div>
+
+      <!-- SOUTH REGION -->
+      <div class="region-wrapper" id="south-wrapper">
+        <div class="region-label-strip">SOUTH</div>
+        <div class="round-col" id="s-r64"></div>
+        <div class="round-col" id="s-r32"></div>
+        <div class="round-col" id="s-s16"></div>
+        <div class="round-col col-e8" id="s-e8"></div>
+      </div>
+
+    </div>
+
+    <!-- CENTER COLUMN -->
+    <div id="center-column">
+      <div class="center-label">East Champion</div>
+      <div id="slot-f4-es"></div>
+      <div class="center-spacer"></div>
+      <div class="center-label">🏆 Championship</div>
+      <div id="slot-champ"></div>
+      <div class="center-spacer"></div>
+      <div class="center-label">Midwest Champion</div>
+      <div id="slot-f4-mw"></div>
+    </div>
+
+    <!-- RIGHT HALF: Midwest (top) + West (bottom) -->
+    <div class="bracket-half" id="right-half">
+
+      <!-- MIDWEST REGION -->
+      <div class="region-wrapper" id="midwest-wrapper">
+        <div class="round-col col-e8" id="mw-e8"></div>
+        <div class="round-col" id="mw-s16"></div>
+        <div class="round-col" id="mw-r32"></div>
+        <div class="round-col" id="mw-r64"></div>
+        <div class="region-label-strip right-label">MIDWEST</div>
+      </div>
+
+      <!-- WEST REGION -->
+      <div class="region-wrapper" id="west-wrapper">
+        <div class="round-col col-e8" id="w-e8"></div>
+        <div class="round-col" id="w-s16"></div>
+        <div class="round-col" id="w-r32"></div>
+        <div class="round-col" id="w-r64"></div>
+        <div class="region-label-strip right-label">WEST</div>
+      </div>
+
+    </div>
+  </div><!-- /bracket-wrap -->
+</div><!-- /bracket-scroll -->
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<!-- ============================================================
+     MODAL: CORRECT THE WINNER
+     ============================================================ -->
+<div id="modal-backdrop">
+  <div id="modal-box">
+    <h3>Correct the Prediction</h3>
+    <p id="modal-desc">Who actually won this game?</p>
+    <div id="modal-teams"></div>
+    <button id="modal-cancel-btn" onclick="closeModal()">Cancel — keep prediction</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+'use strict';
+
+/* ===========================================================
+   CONSTANTS & GLOBAL STATE
+   =========================================================== */
+const N_FEATURES = 8;
+const FEATURE_NAMES = [
+  'ΔBADJ_EM', 'ΔRPPF', 'ΔZ_RATING', 'Δ538_PWR',
+  'ΔEVAN_REL', 'ΔNET_INV', 'ΔKPI_INV', 'ΔPUBLIC_%'
+];
+
+// Raw CSV data storage
+const CSV = {
+  kenpom:       [],
+  rppf:         [],
+  zrating:      [],
+  fivethirtyeight: [],
+  evanmiya:     [],
+  teamsheet:    [],
+  publicpicks:  [],
+  seedresults:  [],
+  teamresults:  [],
+  matchups:     []
+};
+
+// Computed lookups
+const TEAM_MAP = {};          // normName → { year → { badj_em, rppf, ... } }
+const YEAR_NORMS = {};        // year → [ {min,max} × N_FEATURES ]
+const SEED_WIN_RATE = {};     // seed# → historical win rate (0-1)
+
+// Model
+let MODEL_WEIGHTS  = new Array(N_FEATURES).fill(0);
+let MODEL_TRAINED  = false;
+let TRAINING_COUNT = 0;
+
+// All bracket games: id → game object
+const GAMES = {};
+
+// Modal state
+let MODAL_GAME_ID = null;
+
+/* ===========================================================
+   UTILITY FUNCTIONS
+   =========================================================== */
+function normName(s) {
+  if (!s) return '';
+  return String(s).toLowerCase().trim()
+    .replace(/['']/g, "'")
+    .replace(/[^a-z0-9\s']/g, '')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+
+function dot(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += (a[i] || 0) * (b[i] || 0);
+  return s;
+}
+
+function pFloat(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return isNaN(v) ? null : v;
+  const s = String(v).replace('%', '').trim();
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function normVal(v, min, max) {
+  if (min === max || min === Infinity || max === -Infinity) return 50;
+  return clamp(((v - min) / (max - min)) * 100, 0, 100);
+}
+
+/* ===========================================================
+   BRACKET DEFINITION
+   =========================================================== */
+function defGame(id, nA, sA, nB, sB, cA, cB, isFF) {
+  GAMES[id] = {
+    id, isFF: !!isFF,
+    teamA: { name: nA || null, seed: sA || null },
+    teamB: { name: nB || null, seed: sB || null },
+    childA: cA || null,
+    childB: cB || null,
+    parentGame: null,
+    winner: null, actualWinner: null,
+    state: 'pending',   // 'pending' | 'correct' | 'wrong'
+    probA: null
+  };
+}
+
+function setupBracket() {
+  // Clear
+  for (const k in GAMES) delete GAMES[k];
+
+  // ---- First Four ----
+  defGame('ff1', 'UMBC',           16, 'Howard',        16, null, null, true);
+  defGame('ff2', 'Texas',          11, 'NC State',       11, null, null, true);
+  defGame('ff3', 'Prairie View A&M',16,'Lehigh',         16, null, null, true);
+  defGame('ff4', 'Miami OH',       11, 'SMU',            11, null, null, true);
+
+  // ---- EAST R64 ----
+  defGame('e_r64_1', 'Duke',          1,  'Siena',           16);
+  defGame('e_r64_2', 'Ohio State',    8,  'TCU',             9 );
+  defGame('e_r64_3', "St. John's",    5,  'Northern Iowa',   12);
+  defGame('e_r64_4', 'Kansas',        4,  'Cal Baptist',     13);
+  defGame('e_r64_5', 'Louisville',    6,  'South Florida',   11);
+  defGame('e_r64_6', 'Michigan State',3,  'North Dakota St.',14);
+  defGame('e_r64_7', 'UCLA',          7,  'UCF',             10);
+  defGame('e_r64_8', 'UConn',         2,  'Furman',          15);
+  // EAST R32
+  defGame('e_r32_1', null,null,null,null, 'e_r64_1','e_r64_2');
+  defGame('e_r32_2', null,null,null,null, 'e_r64_3','e_r64_4');
+  defGame('e_r32_3', null,null,null,null, 'e_r64_5','e_r64_6');
+  defGame('e_r32_4', null,null,null,null, 'e_r64_7','e_r64_8');
+  // EAST S16
+  defGame('e_s16_1', null,null,null,null, 'e_r32_1','e_r32_2');
+  defGame('e_s16_2', null,null,null,null, 'e_r32_3','e_r32_4');
+  // EAST E8
+  defGame('e_e8', null,null,null,null, 'e_s16_1','e_s16_2');
+
+  // ---- SOUTH R64 ----
+  defGame('s_r64_1', 'Florida',      1,  'FF3 Winner',     16, null, 'ff3');
+  defGame('s_r64_2', 'Clemson',      8,  'Iowa',            9 );
+  defGame('s_r64_3', 'Vanderbilt',   5,  'McNeese',        12);
+  defGame('s_r64_4', 'Nebraska',     4,  'Troy',           13);
+  defGame('s_r64_5', 'North Carolina',6, 'VCU',            11);
+  defGame('s_r64_6', 'Illinois',     3,  'Penn',           14);
+  defGame('s_r64_7', "Saint Mary's", 7,  'Texas A&M',      10);
+  defGame('s_r64_8', 'Houston',      2,  'Idaho',          15);
+  // SOUTH R32
+  defGame('s_r32_1', null,null,null,null, 's_r64_1','s_r64_2');
+  defGame('s_r32_2', null,null,null,null, 's_r64_3','s_r64_4');
+  defGame('s_r32_3', null,null,null,null, 's_r64_5','s_r64_6');
+  defGame('s_r32_4', null,null,null,null, 's_r64_7','s_r64_8');
+  // SOUTH S16
+  defGame('s_s16_1', null,null,null,null, 's_r32_1','s_r32_2');
+  defGame('s_s16_2', null,null,null,null, 's_r32_3','s_r32_4');
+  // SOUTH E8
+  defGame('s_e8', null,null,null,null, 's_s16_1','s_s16_2');
+
+  // ---- MIDWEST R64 ----
+  defGame('mw_r64_1', 'Michigan',    1,  'FF1 Winner',     16, null, 'ff1');
+  defGame('mw_r64_2', 'Georgia',     8,  'Saint Louis',     9 );
+  defGame('mw_r64_3', 'Texas Tech',  5,  'Akron',          12);
+  defGame('mw_r64_4', 'Alabama',     4,  'Hofstra',        13);
+  defGame('mw_r64_5', 'Tennessee',   6,  'FF4 Winner',     11, null, 'ff4');
+  defGame('mw_r64_6', 'Virginia',    3,  'Wright State',   14);
+  defGame('mw_r64_7', 'Kentucky',    7,  'Santa Clara',    10);
+  defGame('mw_r64_8', 'Iowa State',  2,  'Tennessee State',15);
+  // MIDWEST R32
+  defGame('mw_r32_1', null,null,null,null, 'mw_r64_1','mw_r64_2');
+  defGame('mw_r32_2', null,null,null,null, 'mw_r64_3','mw_r64_4');
+  defGame('mw_r32_3', null,null,null,null, 'mw_r64_5','mw_r64_6');
+  defGame('mw_r32_4', null,null,null,null, 'mw_r64_7','mw_r64_8');
+  // MIDWEST S16
+  defGame('mw_s16_1', null,null,null,null, 'mw_r32_1','mw_r32_2');
+  defGame('mw_s16_2', null,null,null,null, 'mw_r32_3','mw_r32_4');
+  // MIDWEST E8
+  defGame('mw_e8', null,null,null,null, 'mw_s16_1','mw_s16_2');
+
+  // ---- WEST R64 ----
+  defGame('w_r64_1', 'Arizona',     1,  'LIU',             16);
+  defGame('w_r64_2', 'Villanova',   8,  'Utah State',       9 );
+  defGame('w_r64_3', 'Wisconsin',   5,  'High Point',      12);
+  defGame('w_r64_4', 'Arkansas',    4,  'Hawaii',          13);
+  defGame('w_r64_5', 'BYU',         6,  'FF2 Winner',      11, null, 'ff2');
+  defGame('w_r64_6', 'Gonzaga',     3,  'Kennesaw State',  14);
+  defGame('w_r64_7', 'Miami FL',    7,  'Missouri',        10);
+  defGame('w_r64_8', 'Purdue',      2,  'Queens',          15);
+  // WEST R32
+  defGame('w_r32_1', null,null,null,null, 'w_r64_1','w_r64_2');
+  defGame('w_r32_2', null,null,null,null, 'w_r64_3','w_r64_4');
+  defGame('w_r32_3', null,null,null,null, 'w_r64_5','w_r64_6');
+  defGame('w_r32_4', null,null,null,null, 'w_r64_7','w_r64_8');
+  // WEST S16
+  defGame('w_s16_1', null,null,null,null, 'w_r32_1','w_r32_2');
+  defGame('w_s16_2', null,null,null,null, 'w_r32_3','w_r32_4');
+  // WEST E8
+  defGame('w_e8', null,null,null,null, 'w_s16_1','w_s16_2');
+
+  // ---- Final Four ----
+  defGame('f4_es', null,null,null,null, 'e_e8','s_e8');
+  defGame('f4_mw', null,null,null,null, 'mw_e8','w_e8');
+
+  // ---- Championship ----
+  defGame('champ', null,null,null,null, 'f4_es','f4_mw');
+
+  // Build parent refs
+  for (const id in GAMES) {
+    const g = GAMES[id];
+    if (g.childA && GAMES[g.childA]) GAMES[g.childA].parentGame = id;
+    if (g.childB && GAMES[g.childB]) GAMES[g.childB].parentGame = id;
+  }
+}
+
+/* ===========================================================
+   DATA PROCESSING
+   =========================================================== */
+function buildTeamMap() {
+  const set = (name, year, key, val) => {
+    const k = normName(name);
+    if (!k) return;
+    if (!TEAM_MAP[k]) TEAM_MAP[k] = {};
+    if (!TEAM_MAP[k][year]) TEAM_MAP[k][year] = {};
+    TEAM_MAP[k][year][key] = val;
+  };
+
+  for (const r of CSV.kenpom) {
+    const v = pFloat(r['BADJ EM']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'badj_em', v);
+  }
+  for (const r of CSV.rppf) {
+    const v = pFloat(r['RPPF RATING']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'rppf', v);
+  }
+  for (const r of CSV.zrating) {
+    const v = pFloat(r['Z RATING']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'z_rating', v);
+  }
+  for (const r of CSV.fivethirtyeight) {
+    const v = pFloat(r['POWER RATING']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'power538', v);
+  }
+  for (const r of CSV.evanmiya) {
+    const v = pFloat(r['RELATIVE RATING']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'relative_evan', v);
+  }
+  for (const r of CSV.teamsheet) {
+    const net = pFloat(r['NET']);
+    const kpi = pFloat(r['KPI']);
+    if (net !== null) set(r.TEAM, +r.YEAR, 'net', net);
+    if (kpi !== null) set(r.TEAM, +r.YEAR, 'kpi', kpi);
+  }
+  for (const r of CSV.publicpicks) {
+    const v = pFloat(r['R64']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'public_r64', v);
+  }
+}
+
+function buildYearNorms() {
+  // Collect all years from kenpom
+  const years = new Set(CSV.kenpom.map(r => +r.YEAR));
+  CSV.rppf.forEach(r => years.add(+r.YEAR));
+
+  for (const y of years) {
+    YEAR_NORMS[y] = Array.from({length: N_FEATURES}, () => ({ min: Infinity, max: -Infinity }));
+  }
+
+  const expand = (year, fi, v) => {
+    if (!YEAR_NORMS[year]) return;
+    if (v < YEAR_NORMS[year][fi].min) YEAR_NORMS[year][fi].min = v;
+    if (v > YEAR_NORMS[year][fi].max) YEAR_NORMS[year][fi].max = v;
+  };
+
+  for (const r of CSV.kenpom) {
+    const v = pFloat(r['BADJ EM']); if (v !== null) expand(+r.YEAR, 0, v);
+  }
+  for (const r of CSV.rppf) {
+    const v = pFloat(r['RPPF RATING']); if (v !== null) expand(+r.YEAR, 1, v);
+  }
+  for (const r of CSV.zrating) {
+    const v = pFloat(r['Z RATING']); if (v !== null) expand(+r.YEAR, 2, v);
+  }
+  for (const r of CSV.fivethirtyeight) {
+    const v = pFloat(r['POWER RATING']); if (v !== null) expand(+r.YEAR, 3, v);
+  }
+  for (const r of CSV.evanmiya) {
+    const v = pFloat(r['RELATIVE RATING']); if (v !== null) expand(+r.YEAR, 4, v);
+  }
+  for (const r of CSV.teamsheet) {
+    const net = pFloat(r['NET']); if (net !== null) expand(+r.YEAR, 5, -net);
+    const kpi = pFloat(r['KPI']); if (kpi !== null) expand(+r.YEAR, 6, -kpi);
+  }
+  for (const r of CSV.publicpicks) {
+    const v = pFloat(r['R64']); if (v !== null) expand(+r.YEAR, 7, v);
+  }
+}
+
+function buildSeedRates() {
+  for (const r of CSV.seedresults) {
+    const seed = +r.SEED;
+    const wr = pFloat(r['WIN%']);
+    if (!isNaN(seed) && wr !== null) SEED_WIN_RATE[seed] = wr;
+  }
+}
+
+function getTeamMetrics(name, preferYear) {
+  const k = normName(name);
+  if (!TEAM_MAP[k]) return null;
+  const avail = Object.keys(TEAM_MAP[k]).map(Number)
+    .filter(y => y >= 2016 && y <= 2025)
+    .sort((a,b) => b - a);
+  if (!avail.length) return null;
+  // Prefer most recent year ≤ preferYear (or 2025)
+  const cap = preferYear || 2025;
+  const yr = avail.find(y => y <= cap) || avail[0];
+  return { year: yr, ...TEAM_MAP[k][yr] };
+}
+
+function featureVec(teamName, preferYear) {
+  const m = getTeamMetrics(teamName, preferYear);
+  const yr = m ? m.year : 2025;
+  const norms = YEAR_NORMS[yr] || YEAR_NORMS[2025] || [];
+
+  const raw = [
+    m ? (m.badj_em       ?? null) : null,
+    m ? (m.rppf          ?? null) : null,
+    m ? (m.z_rating      ?? null) : null,
+    m ? (m.power538      ?? null) : null,
+    m ? (m.relative_evan ?? null) : null,
+    m && m.net !== undefined ? -m.net : null,
+    m && m.kpi !== undefined ? -m.kpi : null,
+    m ? (m.public_r64    ?? null) : null
+  ];
+
+  return raw.map((v, i) => {
+    if (v === null) return 50;
+    if (!norms[i] || norms[i].min === Infinity) return 50;
+    return normVal(v, norms[i].min, norms[i].max);
+  });
+}
+
+/* ===========================================================
+   MODEL TRAINING — GRADIENT DESCENT LOGISTIC REGRESSION
+   =========================================================== */
+function buildTrainingExamples() {
+  const examples = [];
+  // Group matchups by YEAR + CURRENT_ROUND
+  const groups = {};
+  for (const r of CSV.matchups) {
+    const yr = +r.YEAR;
+    if (yr === 2020) continue; // no tournament
+    const cr = +r['CURRENT ROUND'];
+    const key = `${yr}_${cr}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  }
+
+  for (const key of Object.keys(groups)) {
+    const rows = groups[key].sort((a,b) => +a['BY YEAR NO'] - +b['BY YEAR NO']);
+    const yr = +rows[0].YEAR;
+
+    for (let i = 0; i + 1 < rows.length; i += 2) {
+      const r1 = rows[i], r2 = rows[i+1];
+      // Verify they're a consecutive pair
+      if (Math.abs(+r1['BY YEAR NO'] - +r2['BY YEAR NO']) > 3) continue;
+
+      const s1 = pFloat(r1.SCORE), s2 = pFloat(r2.SCORE);
+      if (s1 === null || s2 === null || s1 === s2) continue;
+
+      const [winner, loser] = s1 > s2 ? [r1, r2] : [r2, r1];
+      const wf = featureVec(winner.TEAM, yr);
+      const lf = featureVec(loser.TEAM, yr);
+      const diff  = wf.map((v, i) => v - lf[i]);
+      const diffN = diff.map(v => -v);
+
+      examples.push({ features: diff,  label: 1 });
+      examples.push({ features: diffN, label: 0 });
+    }
+  }
+  return examples;
+}
+
+function trainModel() {
+  const examples = buildTrainingExamples();
+  TRAINING_COUNT = examples.length;
+  if (!examples.length) {
+    console.warn('No training examples available — using zero weights');
+    return;
+  }
+
+  const w = new Array(N_FEATURES).fill(0);
+  const lr = 0.01;
+  const ITERS = 150;
+  const n = examples.length;
+
+  for (let iter = 0; iter < ITERS; iter++) {
+    const grad = new Array(N_FEATURES).fill(0);
+    for (const ex of examples) {
+      const pred = sigmoid(dot(w, ex.features));
+      const err  = pred - ex.label;
+      for (let j = 0; j < N_FEATURES; j++) {
+        grad[j] += err * ex.features[j];
+      }
+    }
+    for (let j = 0; j < N_FEATURES; j++) {
+      w[j] -= (lr / n) * grad[j];
+    }
+  }
+
+  MODEL_WEIGHTS = w;
+  MODEL_TRAINED = true;
+
+  console.log(`Model trained: ${n} examples, ${ITERS} iterations`);
+  console.log('Weights:', FEATURE_NAMES.map((nm,i) => `${nm}=${w[i].toFixed(4)}`).join(', '));
+}
+
+/* ===========================================================
+   WIN PROBABILITY
+   =========================================================== */
+function seedMatchupProb(seedA, seedB) {
+  const rA = SEED_WIN_RATE[seedA] ?? 0.5;
+  const rB = SEED_WIN_RATE[seedB] ?? 0.5;
+  const total = rA + rB;
+  return total === 0 ? 0.5 : rA / total;
+}
+
+function predictProb(nameA, seedA, nameB, seedB) {
+  if (!nameA || !nameB) return 0.5;
+  const isTBD = s => !s || s.includes('Winner') || s.includes('FF');
+  if (isTBD(nameA) || isTBD(nameB)) return 0.5;
+
+  const fA = featureVec(nameA, 2025);
+  const fB = featureVec(nameB, 2025);
+  const diff = fA.map((v,i) => v - fB[i]);
+
+  const modelP = MODEL_TRAINED ? sigmoid(dot(MODEL_WEIGHTS, diff)) : 0.5;
+  const seedP  = seedMatchupProb(seedA, seedB);
+  return clamp(modelP * 0.8 + seedP * 0.2, 0.02, 0.98);
+}
+
+/* ===========================================================
+   PREDICTION PROPAGATION
+   =========================================================== */
+// Traverse order: leaves → root
+const TOPO_ORDER = [
+  'ff1','ff2','ff3','ff4',
+  'e_r64_1','e_r64_2','e_r64_3','e_r64_4','e_r64_5','e_r64_6','e_r64_7','e_r64_8',
+  's_r64_1','s_r64_2','s_r64_3','s_r64_4','s_r64_5','s_r64_6','s_r64_7','s_r64_8',
+  'mw_r64_1','mw_r64_2','mw_r64_3','mw_r64_4','mw_r64_5','mw_r64_6','mw_r64_7','mw_r64_8',
+  'w_r64_1','w_r64_2','w_r64_3','w_r64_4','w_r64_5','w_r64_6','w_r64_7','w_r64_8',
+  'e_r32_1','e_r32_2','e_r32_3','e_r32_4',
+  's_r32_1','s_r32_2','s_r32_3','s_r32_4',
+  'mw_r32_1','mw_r32_2','mw_r32_3','mw_r32_4',
+  'w_r32_1','w_r32_2','w_r32_3','w_r32_4',
+  'e_s16_1','e_s16_2','s_s16_1','s_s16_2',
+  'mw_s16_1','mw_s16_2','w_s16_1','w_s16_2',
+  'e_e8','s_e8','mw_e8','w_e8',
+  'f4_es','f4_mw','champ'
+];
+
+function propagateGameWinner(gameId) {
+  const g = GAMES[gameId];
+  if (!g || !g.winner) return;
+  if (!g.parentGame) return;
+
+  const parent = GAMES[g.parentGame];
+  if (parent.childA === gameId) {
+    parent.teamA = { name: g.winner.name, seed: g.winner.seed };
+  } else if (parent.childB === gameId) {
+    parent.teamB = { name: g.winner.name, seed: g.winner.seed };
+  }
+
+  // If parent has both known teams, predict it (if still pending)
+  if (parent.teamA.name && parent.teamB.name && parent.state === 'pending') {
+    const isResolved = n => n && !n.includes('Winner') && !n.includes('TBD');
+    if (isResolved(parent.teamA.name) && isResolved(parent.teamB.name)) {
+      parent.probA = predictProb(parent.teamA.name, parent.teamA.seed,
+                                 parent.teamB.name, parent.teamB.seed);
+      parent.winner = parent.probA >= 0.5 ? parent.teamA : parent.teamB;
+    }
+  }
+
+  renderCard(parent.id);
+  propagateGameWinner(parent.id);
+}
+
+function runFullPrediction() {
+  for (const id of TOPO_ORDER) {
+    const g = GAMES[id];
+    if (!g || g.state !== 'pending') {
+      // If already decided, propagate its winner downstream
+      if (g && g.winner) propagateGameWinner(id);
+      continue;
+    }
+
+    // Pull teams from children if not set
+    if (g.childA) {
+      const cg = GAMES[g.childA];
+      if (cg && cg.winner) g.teamA = { ...cg.winner };
+    }
+    if (g.childB) {
+      const cg = GAMES[g.childB];
+      if (cg && cg.winner) g.teamB = { ...cg.winner };
+    }
+
+    // Check if ready
+    const isResolved = n => n && !n.includes('Winner') && !n.includes('TBD') && !n.includes('FF');
+    if (!isResolved(g.teamA.name) || !isResolved(g.teamB.name)) continue;
+
+    g.probA  = predictProb(g.teamA.name, g.teamA.seed, g.teamB.name, g.teamB.seed);
+    g.winner = g.probA >= 0.5 ? g.teamA : g.teamB;
+    renderCard(id);
+
+    // Push winner to parent
+    if (g.parentGame) {
+      const p = GAMES[g.parentGame];
+      if (p.childA === id) p.teamA = { ...g.winner };
+      else if (p.childB === id) p.teamB = { ...g.winner };
+    }
+  }
+}
+
+function predictAll() {
+  runFullPrediction();
+  for (const id in GAMES) renderCard(id);
+  updateStats();
+  drawConnectors();
+  saveState();
+}
+
+/* ===========================================================
+   UI: RENDER CARDS
+   =========================================================== */
+function isTBDName(s) {
+  return !s || s.includes('Winner') || s.includes('FF') || s.includes('TBD');
+}
+
+function renderCard(id) {
+  const g = GAMES[id];
+  if (!g) return;
+  const el = document.getElementById(`card-${id}`);
+  if (!el) return;
+
+  const tA = g.teamA, tB = g.teamB;
+  const pA = g.probA !== null ? g.probA : 0.5;
+  const pB = 1 - pA;
+  const winnerName = g.winner ? g.winner.name : null;
+
+  const isWinA = !!(winnerName && tA.name && winnerName === tA.name);
+  const isWinB = !!(winnerName && tB.name && winnerName === tB.name);
+  const tBDA = isTBDName(tA.name);
+  const tBDB = isTBDName(tB.name);
+
+  const nA = tA.name || '—';
+  const nB = tB.name || '—';
+  const sA = tA.seed || '?';
+  const sB = tB.seed || '?';
+
+  // State class
+  el.className = el.className.replace(/\bstate-\w+/g, '').trim();
+  if (g.state !== 'pending') el.classList.add(`state-${g.state}`);
+
+  // Champ banner
+  const champBanner = (id === 'champ') ? `<div class="champ-banner">🏆 National Championship</div>` : '';
+
+  // Footer
+  let footer = '';
+  if (g.winner && g.state === 'pending') {
+    footer = `
+      <div class="card-footer">
+        <div class="card-actions">
+          <button class="card-act-btn btn-correct-act" onclick="markCorrect('${id}')">✓ Correct</button>
+          <button class="card-act-btn btn-wrong-act"   onclick="openModal('${id}')">✗ Wrong</button>
+        </div>
+      </div>`;
+  } else if (g.state === 'correct') {
+    footer = `<div class="card-footer"><div class="card-status-line status-correct">✓ Correct Pick</div></div>`;
+  } else if (g.state === 'wrong') {
+    footer = `<div class="card-footer"><div class="card-status-line status-wrong">✗ Corrected</div></div>`;
+  }
+
+  el.innerHTML = `
+    ${champBanner}
+    <div class="team-row${isWinA?' row-winner':''}${tBDA?' row-tbd':''}"
+         data-game="${id}" data-team="A">
+      <div class="seed-num">${sA}</div>
+      <div class="team-name" title="${nA}">${nA}</div>
+      ${g.winner ? `<div class="team-prob">${(pA*100).toFixed(0)}%</div>` : ''}
+    </div>
+    <div class="prob-bar-wrap">
+      <div class="prob-bar-fill" style="width:${g.winner ? (pA*100).toFixed(1) : 50}%"></div>
+    </div>
+    <div class="teams-divider"></div>
+    <div class="team-row${isWinB?' row-winner':''}${tBDB?' row-tbd':''}"
+         data-game="${id}" data-team="B">
+      <div class="seed-num">${sB}</div>
+      <div class="team-name" title="${nB}">${nB}</div>
+      ${g.winner ? `<div class="team-prob">${(pB*100).toFixed(0)}%</div>` : ''}
+    </div>
+    ${footer}`;
+
+  if (g.winner && g.state === 'pending') {
+    el.classList.add('animate-win');
+    setTimeout(() => el.classList.remove('animate-win'), 2000);
+  }
+}
+
+/* ===========================================================
+   UI: BUILD BRACKET STRUCTURE
+   =========================================================== */
+function makeSlot(id) {
+  const slot = document.createElement('div');
+  slot.className = 'game-slot';
+  const card = document.createElement('div');
+  card.id = `card-${id}`;
+  const g = GAMES[id];
+  card.className = `game-card${g.isFF ? ' card-ff' : ''}`;
+  if (id === 'champ') card.classList.add('card-champ');
+  if (id === 'f4_es' || id === 'f4_mw') card.classList.add('card-f4');
+  card.style.animationDelay = `${(Math.random() * 0.4).toFixed(2)}s`;
+  slot.appendChild(card);
+  return slot;
+}
+
+function fillCol(colId, ids) {
+  const col = document.getElementById(colId);
+  if (!col) return;
+  for (const id of ids) {
+    if (GAMES[id]) col.appendChild(makeSlot(id));
+  }
+}
+
+function buildBracketDOM() {
+  // First Four
+  const ffCont = document.getElementById('ff-cards');
+  for (const id of ['ff1','ff2','ff3','ff4']) {
+    ffCont.appendChild(makeSlot(id));
+  }
+
+  // East
+  fillCol('e-r64', ['e_r64_1','e_r64_2','e_r64_3','e_r64_4','e_r64_5','e_r64_6','e_r64_7','e_r64_8']);
+  fillCol('e-r32', ['e_r32_1','e_r32_2','e_r32_3','e_r32_4']);
+  fillCol('e-s16', ['e_s16_1','e_s16_2']);
+  fillCol('e-e8',  ['e_e8']);
+
+  // South
+  fillCol('s-r64', ['s_r64_1','s_r64_2','s_r64_3','s_r64_4','s_r64_5','s_r64_6','s_r64_7','s_r64_8']);
+  fillCol('s-r32', ['s_r32_1','s_r32_2','s_r32_3','s_r32_4']);
+  fillCol('s-s16', ['s_s16_1','s_s16_2']);
+  fillCol('s-e8',  ['s_e8']);
+
+  // Midwest (reversed columns in DOM)
+  fillCol('mw-e8',  ['mw_e8']);
+  fillCol('mw-s16', ['mw_s16_1','mw_s16_2']);
+  fillCol('mw-r32', ['mw_r32_1','mw_r32_2','mw_r32_3','mw_r32_4']);
+  fillCol('mw-r64', ['mw_r64_1','mw_r64_2','mw_r64_3','mw_r64_4','mw_r64_5','mw_r64_6','mw_r64_7','mw_r64_8']);
+
+  // West (reversed columns in DOM)
+  fillCol('w-e8',  ['w_e8']);
+  fillCol('w-s16', ['w_s16_1','w_s16_2']);
+  fillCol('w-r32', ['w_r32_1','w_r32_2','w_r32_3','w_r32_4']);
+  fillCol('w-r64', ['w_r64_1','w_r64_2','w_r64_3','w_r64_4','w_r64_5','w_r64_6','w_r64_7','w_r64_8']);
+
+  // Center
+  const f4es   = document.getElementById('slot-f4-es');
+  const champ  = document.getElementById('slot-champ');
+  const f4mw   = document.getElementById('slot-f4-mw');
+  f4es.appendChild(makeSlot('f4_es').querySelector('.game-card'));
+  champ.appendChild(makeSlot('champ').querySelector('.game-card'));
+  f4mw.appendChild(makeSlot('f4_mw').querySelector('.game-card'));
+
+  // Initial render
+  for (const id in GAMES) renderCard(id);
+}
+
+/* ===========================================================
+   SVG BRACKET CONNECTORS
+   =========================================================== */
+function drawConnectors() {
+  const svg    = document.getElementById('connector-svg');
+  const wrap   = document.getElementById('bracket-wrap');
+  const origin = wrap.getBoundingClientRect();
+
+  svg.setAttribute('width',  wrap.scrollWidth);
+  svg.setAttribute('height', wrap.scrollHeight);
+
+  const CR = '#2a3f6a';
+
+  const cardRect = (id) => {
+    const el = document.getElementById(`card-${id}`);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return {
+      l:  r.left  - origin.left,
+      r:  r.right - origin.left,
+      t:  r.top   - origin.top,
+      b:  r.bottom - origin.top,
+      my: (r.top + r.bottom) / 2 - origin.top
+    };
+  };
+
+  // Draw connector: from right of childA and childB into left of parent
+  const connLeft = (cid, pid) => {
+    const c = cardRect(cid), p = cardRect(pid);
+    if (!c || !p) return '';
+    const mx = (c.r + p.l) / 2;
+    return `<polyline points="${c.r},${c.my} ${mx},${c.my} ${mx},${p.my} ${p.l},${p.my}" fill="none" stroke="${CR}" stroke-width="1.5"/>`;
+  };
+
+  // Draw connector: from right of parent into left of children
+  const connRight = (cid, pid) => {
+    const c = cardRect(cid), p = cardRect(pid);
+    if (!c || !p) return '';
+    const mx = (p.r + c.l) / 2;
+    return `<polyline points="${p.r},${p.my} ${mx},${p.my} ${mx},${c.my} ${c.l},${c.my}" fill="none" stroke="${CR}" stroke-width="1.5"/>`;
+  };
+
+  let markup = '';
+
+  ['e','s'].forEach(r => {
+    for (let n = 1; n <= 4; n++) {
+      const g1 = `${r}_r64_${n*2-1}`, g2 = `${r}_r64_${n*2}`, p = `${r}_r32_${n}`;
+      markup += connLeft(g1, p) + connLeft(g2, p);
+    }
+    for (let n = 1; n <= 2; n++) {
+      const g1 = `${r}_r32_${n*2-1}`, g2 = `${r}_r32_${n*2}`, p = `${r}_s16_${n}`;
+      markup += connLeft(g1, p) + connLeft(g2, p);
+    }
+    markup += connLeft(`${r}_s16_1`, `${r}_e8`);
+    markup += connLeft(`${r}_s16_2`, `${r}_e8`);
+  });
+
+  ['mw','w'].forEach(r => {
+    for (let n = 1; n <= 4; n++) {
+      const g1 = `${r}_r64_${n*2-1}`, g2 = `${r}_r64_${n*2}`, p = `${r}_r32_${n}`;
+      markup += connRight(g1, p) + connRight(g2, p);
+    }
+    for (let n = 1; n <= 2; n++) {
+      const g1 = `${r}_r32_${n*2-1}`, g2 = `${r}_r32_${n*2}`, p = `${r}_s16_${n}`;
+      markup += connRight(g1, p) + connRight(g2, p);
+    }
+    markup += connRight(`${r}_s16_1`, `${r}_e8`);
+    markup += connRight(`${r}_s16_2`, `${r}_e8`);
+  });
+
+  markup += connLeft('e_e8',  'f4_es');
+  markup += connLeft('s_e8',  'f4_es');
+  markup += connLeft('f4_es', 'champ');
+  markup += connRight('mw_e8', 'f4_mw');
+  markup += connRight('w_e8',  'f4_mw');
+  markup += connRight('f4_mw', 'champ');
+
+  svg.innerHTML = markup;
+}
+
+/* ===========================================================
+   USER ACTIONS
+   =========================================================== */
+function markCorrect(gameId) {
+  const g = GAMES[gameId];
+  if (!g) return;
+  g.state = 'correct';
+  g.actualWinner = g.winner ? { ...g.winner } : null;
+  renderCard(gameId);
+  updateStats();
+  saveState();
+}
+
+function openModal(gameId) {
+  MODAL_GAME_ID = gameId;
+  const g = GAMES[gameId];
+  const pred = g.winner ? g.winner.name : '?';
+
+  document.getElementById('modal-desc').textContent =
+    `Predicted: ${pred}. Who actually won?`;
+
+  const teamsDiv = document.getElementById('modal-teams');
+  teamsDiv.innerHTML = '';
+
+  const candidates = [g.teamA, g.teamB].filter(t => t && t.name && !isTBDName(t.name));
+  candidates.forEach(team => {
+    const btn = document.createElement('button');
+    btn.className = 'modal-pick-btn';
+    btn.innerHTML = `<span class="modal-seed-badge">${team.seed}</span>${team.name}`;
+    btn.onclick = () => applyCorrection(gameId, team);
+    teamsDiv.appendChild(btn);
+  });
+
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('open');
+  MODAL_GAME_ID = null;
+}
+
+function applyCorrection(gameId, actualWinner) {
+  closeModal();
+  const g = GAMES[gameId];
+  g.state = 'wrong';
+  g.actualWinner = { ...actualWinner };
+  g.winner       = { ...actualWinner };
+  renderCard(gameId);
+
+  // Cascade: reset and re-predict downstream
+  if (g.parentGame) {
+    resetDownstreamFrom(g.parentGame, gameId);
+    // Update parent's incoming slot
+    const parent = GAMES[g.parentGame];
+    if (parent.childA === gameId) parent.teamA = { ...actualWinner };
+    else if (parent.childB === gameId) parent.teamB = { ...actualWinner };
+    repredictFrom(g.parentGame);
+  }
+
+  updateStats();
+  drawConnectors();
+  saveState();
+}
+
+function resetDownstreamFrom(gameId, sourceChildId) {
+  const g = GAMES[gameId];
+  if (!g) return;
+  // Only reset if this game's team came from the changed child
+  const isAffected =
+    (g.childA === sourceChildId || g.childB === sourceChildId) ||
+    g.state === 'pending';
+
+  if (g.state === 'correct' || g.state === 'wrong') return; // don't override manual
+
+  g.winner = null;
+  g.probA  = null;
+  g.state  = 'pending';
+
+  // Reset the team slot that came from affected child
+  if (g.childA && GAMES[g.childA] && g.childA !== sourceChildId) {
+    const ca = GAMES[g.childA];
+    if (ca.winner) g.teamA = { ...ca.winner };
+  }
+  if (g.childB && GAMES[g.childB] && g.childB !== sourceChildId) {
+    const cb = GAMES[g.childB];
+    if (cb.winner) g.teamB = { ...cb.winner };
+  }
+
+  renderCard(gameId);
+
+  if (g.parentGame) {
+    resetDownstreamFrom(g.parentGame, gameId);
+  }
+}
+
+function repredictFrom(gameId) {
+  const g = GAMES[gameId];
+  if (!g || g.state !== 'pending') {
+    if (g && g.winner && g.parentGame) propagateGameWinner(gameId);
+    return;
+  }
+  if (!g.teamA.name || !g.teamB.name) return;
+  if (isTBDName(g.teamA.name) || isTBDName(g.teamB.name)) return;
+
+  g.probA  = predictProb(g.teamA.name, g.teamA.seed, g.teamB.name, g.teamB.seed);
+  g.winner = g.probA >= 0.5 ? g.teamA : g.teamB;
+  renderCard(gameId);
+  propagateGameWinner(gameId);
+}
+
+function resetBracket() {
+  if (!confirm('Reset all predictions? Manual corrections will also be cleared.')) return;
+  setupBracket();
+  for (const id in GAMES) renderCard(id);
+  updateStats();
+  drawConnectors();
+  try { localStorage.removeItem('mm2026_state'); } catch(e) {}
+}
+
+function updateStats() {
+  let correct = 0, wrong = 0, predicted = 0;
+  for (const id in GAMES) {
+    const g = GAMES[id];
+    if (g.state === 'correct') correct++;
+    else if (g.state === 'wrong') wrong++;
+    else if (g.winner) predicted++;
+  }
+  const judged = correct + wrong;
+
+  document.getElementById('stat-correct').textContent  = correct;
+  document.getElementById('stat-wrong').textContent    = wrong;
+  document.getElementById('stat-pending').textContent  = predicted;
+  document.getElementById('stat-accuracy').textContent =
+    judged > 0 ? `${Math.round(correct/judged*100)}%` : '—';
+  document.getElementById('stat-model').textContent    =
+    TRAINING_COUNT > 0 ? TRAINING_COUNT : '—';
+}
+
+/* ===========================================================
+   STATE PERSISTENCE (localStorage)
+   =========================================================== */
+function saveState() {
+  const snapshot = {};
+  for (const id in GAMES) {
+    const g = GAMES[id];
+    snapshot[id] = {
+      teamA:        g.teamA,
+      teamB:        g.teamB,
+      winner:       g.winner,
+      actualWinner: g.actualWinner,
+      state:        g.state,
+      probA:        g.probA
+    };
+  }
+  try {
+    localStorage.setItem('mm2026_state', JSON.stringify(snapshot));
+  } catch(e) {
+    console.warn('Could not save state:', e);
+  }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem('mm2026_state');
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    let hasData = false;
+    for (const id in snap) {
+      if (!GAMES[id]) continue;
+      const s = snap[id];
+      if (s.teamA)  GAMES[id].teamA        = s.teamA;
+      if (s.teamB)  GAMES[id].teamB        = s.teamB;
+      GAMES[id].winner       = s.winner       || null;
+      GAMES[id].actualWinner = s.actualWinner || null;
+      GAMES[id].state        = s.state        || 'pending';
+      GAMES[id].probA        = s.probA        !== undefined ? s.probA : null;
+      if (s.winner) hasData = true;
+    }
+    return hasData;
+  } catch(e) {
+    console.warn('Could not load state:', e);
+    return false;
+  }
+}
+
+/* ===========================================================
+   CSV LOADING
+   =========================================================== */
+const CSV_DEFS = [
+  { key: 'kenpom',          file: 'data/KenPom Barttorvik.csv' },
+  { key: 'rppf',            file: 'data/RPPF Ratings.csv'      },
+  { key: 'zrating',         file: 'data/Z Rating Teams.csv'    },
+  { key: 'fivethirtyeight', file: 'data/538 Ratings.csv'       },
+  { key: 'evanmiya',        file: 'data/EvanMiya.csv'          },
+  { key: 'teamsheet',       file: 'data/Teamsheet Ranks.csv'   },
+  { key: 'publicpicks',     file: 'data/Public Picks.csv'      },
+  { key: 'seedresults',     file: 'data/Seed Results.csv'      },
+  { key: 'teamresults',     file: 'data/Team Results.csv'      },
+  { key: 'matchups',        file: 'data/Tournament Matchups.csv' }
+];
+
+let loadDone = 0;
+let loadFails = 0;
+
+function setLoadingMsg(msg) {
+  document.getElementById('loading-status').textContent = msg;
+}
+
+function addLoadItem(file, ok, rows) {
+  const div = document.createElement('div');
+  div.className = `load-item ${ok ? 'done' : 'error'}`;
+  div.innerHTML = `<span class="li-icon">${ok ? '✓' : '✗'}</span>
+    ${file}${ok ? ` — ${rows} rows` : ' — failed'}`;
+  document.getElementById('loading-items').appendChild(div);
+
+  loadDone++;
+  const pct = Math.round(loadDone / CSV_DEFS.length * 100);
+  document.getElementById('loading-bar').style.width = pct + '%';
+}
+
+async function loadOneCSV(key, file) {
+  // Encode spaces in the path (e.g. "data/KenPom Barttorvik.csv" → "data/KenPom%20Barttorvik.csv")
+  const url = file.split('/').map(seg => encodeURIComponent(seg)).join('/');
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+    CSV[key] = result.data;
+    addLoadItem(file, true, result.data.length);
+    return true;
+  } catch (err) {
+    loadFails++;
+    addLoadItem(file, false, 0);
+    return false;
+  }
+}
+
+async function loadAllCSVs() {
+  setLoadingMsg('Fetching data files…');
+  await Promise.all(CSV_DEFS.map(({ key, file }) => loadOneCSV(key, file)));
+
+  if (loadFails > 0) {
+    document.getElementById('loading-warn').style.display = 'block';
+  }
+  if (loadFails === CSV_DEFS.length) {
+    setLoadingMsg('All files failed to load — predictions will use seed fallback only.');
+  } else {
+    setLoadingMsg('Processing data…');
+  }
+}
+
+/* ===========================================================
+   MAIN INITIALIZATION
+   =========================================================== */
+async function init() {
+  // 1. Define bracket structure
+  setupBracket();
+
+  // 2. Build DOM
+  buildBracketDOM();
+
+  // 3. Load CSVs
+  await loadAllCSVs();
+
+  // 4. Process data
+  setLoadingMsg('Building team metrics map…');
+  await tick();
+  buildTeamMap();
+  buildYearNorms();
+  buildSeedRates();
+
+  // 5. Train model
+  setLoadingMsg('Training logistic regression model…');
+  await tick();
+  trainModel();
+
+  // 6. Restore saved state OR predict fresh
+  const restored = loadState();
+  if (restored) {
+    setLoadingMsg('Restoring saved bracket…');
+    for (const id in GAMES) renderCard(id);
+  } else {
+    setLoadingMsg('Generating predictions…');
+    await tick();
+    runFullPrediction();
+    for (const id in GAMES) renderCard(id);
+  }
+
+  // 7. Update stats
+  updateStats();
+
+  // 8. Dismiss overlay
+  setLoadingMsg('Ready!');
+  await tick();
+  const overlay = document.getElementById('loading-overlay');
+  overlay.style.opacity = '0';
+  overlay.style.pointerEvents = 'none';
+  setTimeout(() => { overlay.style.display = 'none'; }, 650);
+
+  // 9. Draw connectors after layout is painted
+  requestAnimationFrame(() => requestAnimationFrame(drawConnectors));
+
+  // 10. Re-draw on resize
+  window.addEventListener('resize', debounce(drawConnectors, 200));
+}
+
+function tick() { return new Promise(r => setTimeout(r, 0)); }
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+/* Close modal on backdrop click */
+document.getElementById('modal-backdrop').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+/* Keyboard: Escape closes modal */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+
+/* ===========================================================
+   TOOLTIP: show team analytics on game-card hover
+   =========================================================== */
+const TOOLTIP_EL = document.getElementById('tooltip');
+let tooltipTimeout = null;
+
+function showTooltip(e) {
+  const row = e.target.closest('.team-row[data-game]');
+  if (!row) return;
+
+  const gameId  = row.dataset.game;
+  const teamSide = row.dataset.team; // 'A' or 'B'
+  const g = GAMES[gameId];
+  if (!g) return;
+
+  const team = teamSide === 'A' ? g.teamA : g.teamB;
+  if (!team || !team.name || isTBDName(team.name)) return;
+
+  clearTimeout(tooltipTimeout);
+  tooltipTimeout = setTimeout(() => {
+    const m = getTeamMetrics(team.name, 2025);
+    if (!m) return;
+
+    const fmt = (v, decimals) => v !== undefined ? Number(v).toFixed(decimals || 1) : 'N/A';
+
+    TOOLTIP_EL.innerHTML = `
+      <div class="tt-name">${team.name} <span style="font-family:'IBM Plex Mono';font-size:0.7rem;color:#8a9bb5;font-weight:400;">[${team.seed}]</span></div>
+      ${m.badj_em !== undefined
+        ? `<div class="tt-row"><span class="tt-label">BADJ EM</span><span class="tt-val">${fmt(m.badj_em)}</span></div>` : ''}
+      ${m.rppf !== undefined
+        ? `<div class="tt-row"><span class="tt-label">RPPF</span><span class="tt-val">${fmt(m.rppf, 3)}</span></div>` : ''}
+      ${m.z_rating !== undefined
+        ? `<div class="tt-row"><span class="tt-label">Z Rating</span><span class="tt-val">${fmt(m.z_rating, 1)}</span></div>` : ''}
+      ${m.power538 !== undefined
+        ? `<div class="tt-row"><span class="tt-label">538 Power</span><span class="tt-val">${fmt(m.power538, 1)}</span></div>` : ''}
+      ${m.relative_evan !== undefined
+        ? `<div class="tt-row"><span class="tt-label">Evan Miya</span><span class="tt-val">${fmt(m.relative_evan, 1)}</span></div>` : ''}
+      ${m.net !== undefined
+        ? `<div class="tt-row"><span class="tt-label">NET</span><span class="tt-val">${fmt(m.net, 0)}</span></div>` : ''}
+      ${m.kpi !== undefined
+        ? `<div class="tt-row"><span class="tt-label">KPI</span><span class="tt-val">${fmt(m.kpi, 0)}</span></div>` : ''}
+      ${m.public_r64 !== undefined
+        ? `<div class="tt-row"><span class="tt-label">Public%</span><span class="tt-val">${fmt(m.public_r64, 1)}%</span></div>` : ''}
+      <div style="margin-top:5px;font-size:0.6rem;color:#4a5a7a;">Data year: ${m.year}</div>`;
+
+    TOOLTIP_EL.style.display = 'block';
+    positionTooltip(e);
+  }, 220);
+}
+
+function positionTooltip(e) {
+  const tw = TOOLTIP_EL.offsetWidth  || 200;
+  const th = TOOLTIP_EL.offsetHeight || 150;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let x = e.clientX + 14;
+  let y = e.clientY + 14;
+  if (x + tw > vw - 8) x = e.clientX - tw - 10;
+  if (y + th > vh - 8) y = e.clientY - th - 10;
+  TOOLTIP_EL.style.left = x + 'px';
+  TOOLTIP_EL.style.top  = y + 'px';
+}
+
+function hideTooltip() {
+  clearTimeout(tooltipTimeout);
+  TOOLTIP_EL.style.display = 'none';
+}
+
+document.addEventListener('mouseover',  showTooltip);
+document.addEventListener('mousemove',  e => { if (TOOLTIP_EL.style.display !== 'none') positionTooltip(e); });
+document.addEventListener('mouseout',   e => {
+  if (e.target.closest('.team-row[data-game]') && !e.relatedTarget?.closest('.team-row[data-game]')) hideTooltip();
+});
+
+/* ===========================================================
+   MODEL INFO PANEL — appended to header area after load
+   =========================================================== */
+function buildModelPanel() {
+  if (!MODEL_TRAINED) return;
+
+  const panel = document.createElement('div');
+  panel.id = 'model-panel';
+  panel.style.cssText = `
+    background: #0e1b33;
+    border-top: 1px solid #1e2e4a;
+    padding: 8px 20px;
+    display: flex; gap: 16px; align-items: center;
+    font-size: 0.65rem; color: #8a9bb5;
+    flex-wrap: wrap; overflow: hidden;
+    max-height: 0; transition: max-height 0.4s ease;
+  `;
+
+  const wMax = Math.max(...MODEL_WEIGHTS.map(Math.abs));
+  const bars = MODEL_WEIGHTS.map((w, i) => {
+    const pct = wMax > 0 ? Math.round(Math.abs(w) / wMax * 60) : 0;
+    const col  = w >= 0 ? '#4acc88' : '#e06060';
+    return `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+      <span style="color:#4a5a7a;min-width:72px;">${FEATURE_NAMES[i]}</span>
+      <div style="width:${pct}px;height:6px;background:${col};border-radius:3px;"></div>
+      <span style="color:${col};font-weight:600;">${w >= 0 ? '+' : ''}${w.toFixed(3)}</span>
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <span style="color:#d4a017;font-weight:600;white-space:nowrap;">Model Weights</span>
+    ${bars}
+    <span style="color:#4a5a7a;margin-left:auto;">${TRAINING_COUNT} training examples · 150 iterations · lr=0.01</span>`;
+
+  // Insert panel below first-four section
+  const ff = document.getElementById('first-four-section');
+  ff.parentNode.insertBefore(panel, ff.nextSibling);
+
+  requestAnimationFrame(() => { panel.style.maxHeight = '80px'; });
+}
+
+/* ===========================================================
+   REGION SUMMARY TOOLTIPS on region labels
+   =========================================================== */
+function buildRegionSummaries() {
+  const regions = {
+    'east-wrapper':    { region: 'East',    seeds: ['e_r64_1','e_r64_2','e_r64_3','e_r64_4','e_r64_5','e_r64_6','e_r64_7','e_r64_8'] },
+    'south-wrapper':   { region: 'South',   seeds: ['s_r64_1','s_r64_2','s_r64_3','s_r64_4','s_r64_5','s_r64_6','s_r64_7','s_r64_8'] },
+    'midwest-wrapper': { region: 'Midwest', seeds: ['mw_r64_1','mw_r64_2','mw_r64_3','mw_r64_4','mw_r64_5','mw_r64_6','mw_r64_7','mw_r64_8'] },
+    'west-wrapper':    { region: 'West',    seeds: ['w_r64_1','w_r64_2','w_r64_3','w_r64_4','w_r64_5','w_r64_6','w_r64_7','w_r64_8'] }
+  };
+
+  for (const [wrapperId, info] of Object.entries(regions)) {
+    const wrapper = document.getElementById(wrapperId);
+    if (!wrapper) continue;
+    const label = wrapper.querySelector('.region-label-strip');
+    if (!label) continue;
+    label.style.cursor = 'help';
+    label.title = info.region + ' region teams: ' +
+      info.seeds
+        .map(id => GAMES[id])
+        .filter(Boolean)
+        .flatMap(g => [
+          g.teamA.name && !isTBDName(g.teamA.name) ? `(${g.teamA.seed}) ${g.teamA.name}` : null,
+          g.teamB.name && !isTBDName(g.teamB.name) ? `(${g.teamB.seed}) ${g.teamB.name}` : null
+        ])
+        .filter(Boolean)
+        .join(', ');
+  }
+}
+
+/* ===========================================================
+   UPSET DETECTION HELPER
+   =========================================================== */
+function getUpsetClass(seedWinner, seedLoser) {
+  const diff = seedLoser - seedWinner;
+  if (diff >= 10) return 'upset-major';
+  if (diff >= 6)  return 'upset-minor';
+  return '';
+}
+
+/* ===========================================================
+   ENHANCED RENDER: Add upset indicator
+   =========================================================== */
+const _originalRenderCard = renderCard;
+function renderCard(id) {
+  _originalRenderCard(id);
+  // Add upset dot if applicable
+  const g = GAMES[id];
+  if (!g || !g.winner) return;
+  const loser = g.winner === g.teamA ? g.teamB : g.teamA;
+  if (!loser || !loser.seed) return;
+  const upsetClass = getUpsetClass(g.winner.seed, loser.seed);
+  if (!upsetClass) return;
+  const card = document.getElementById(`card-${id}`);
+  if (!card) return;
+  // Add a small indicator to winner row
+  const winRow = card.querySelector('.row-winner .team-name');
+  if (winRow && !winRow.querySelector('.upset-dot')) {
+    const dot = document.createElement('span');
+    dot.className = 'upset-dot';
+    dot.title = upsetClass === 'upset-major' ? 'Major Upset!' : 'Upset';
+    dot.style.cssText = `
+      display:inline-block; width:6px; height:6px;
+      border-radius:50%; margin-left:4px; flex-shrink:0;
+      background: ${upsetClass === 'upset-major' ? '#ff9933' : '#ffcc44'};
+      box-shadow: 0 0 4px ${upsetClass === 'upset-major' ? '#ff993380' : '#ffcc4480'};
+      vertical-align:middle;
+    `;
+    winRow.after(dot);
+  }
+}
+
+/* ===========================================================
+   FINAL SETUP AFTER DOM LOAD
+   =========================================================== */
+/* Start */
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await init();
+    buildModelPanel();
+    buildRegionSummaries();
+  } catch (err) {
+    console.error('Bracket init error:', err);
+    const status = document.getElementById('loading-status');
+    if (status) status.textContent = 'Error: ' + err.message + ' — check console (F12) for details.';
+    const warn = document.getElementById('loading-warn');
+    if (warn) { warn.style.display = 'block'; warn.textContent = String(err); }
+  }
+});
+</script>
+</body>
+</html>
