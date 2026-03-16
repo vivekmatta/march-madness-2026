@@ -603,7 +603,7 @@ body {
 <header id="header">
   <div class="hdr-brand">
     <h1>March Madness 2026</h1>
-    <p>Gradient Descent Logistic Regression · <span>10 Data Sources</span> · 2016–2025 Training</p>
+    <p>3-Model Ensemble · <span>17 Data Sources</span> · 2008–2025 Training</p>
   </div>
   <div class="hdr-stats">
     <div class="stat-box">
@@ -748,10 +748,13 @@ body {
 /* ===========================================================
    CONSTANTS & GLOBAL STATE
    =========================================================== */
-const N_FEATURES = 8;
+const N_FEATURES = 18;
 const FEATURE_NAMES = [
   'ΔBADJ_EM', 'ΔRPPF', 'ΔZ_RATING', 'Δ538_PWR',
-  'ΔEVAN_REL', 'ΔNET_INV', 'ΔKPI_INV', 'ΔPUBLIC_%'
+  'ΔEVAN_REL', 'ΔNET_INV', 'ΔKPI_INV', 'ΔPUBLIC_%',
+  'ΔHC_POWER', 'ΔPRE_IMPROVE', 'ΔWAB_INV', 'ΔELO',
+  'ΔQ1Q2_W', 'ΔBAD_LOSS_INV', 'ΔAP_VOTES', 'ΔRPPF_IMP',
+  'ΔPEDIGREE', 'ΔSEED'
 ];
 
 // Raw CSV data storage
@@ -765,7 +768,13 @@ const CSV = {
   publicpicks:  [],
   seedresults:  [],
   teamresults:  [],
-  matchups:     []
+  matchups:     [],
+  heatcheck:    [],
+  kenpomPre:    [],
+  resumes:      [],
+  rppfPre:      [],
+  appoll:       [],
+  locations:    []
 };
 
 // Computed lookups
@@ -773,10 +782,13 @@ const TEAM_MAP = {};          // normName → { year → { badj_em, rppf, ... } 
 const YEAR_NORMS = {};        // year → [ {min,max} × N_FEATURES ]
 const SEED_WIN_RATE = {};     // seed# → historical win rate (0-1)
 
-// Model
-let MODEL_WEIGHTS  = new Array(N_FEATURES).fill(0);
+// Model — 3-model ensemble
+let MODEL_WEIGHTS  = new Array(N_FEATURES).fill(0);   // Model 1: Full LR
+let MODEL2_WEIGHTS = new Array(N_FEATURES + 3).fill(0); // Model 2: Round-aware LR
+let MODEL3_STUMPS  = [];                                 // Model 3: GBM stumps
 let MODEL_TRAINED  = false;
 let TRAINING_COUNT = 0;
+let CV_RESULTS     = null; // cross-validation results
 
 // All bracket games: id → game object
 const GAMES = {};
@@ -982,23 +994,85 @@ function buildTeamMap() {
     const v = pFloat(r['R64']);
     if (v !== null) set(r.TEAM, +r.YEAR, 'public_r64', v);
   }
+  // --- New data sources ---
+  for (const r of CSV.heatcheck) {
+    const v = pFloat(r['POWER']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'hc_power', v);
+  }
+  for (const r of CSV.kenpomPre) {
+    const v = pFloat(r['KADJ EM CHANGE']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'preseason_improve', v);
+  }
+  for (const r of CSV.resumes) {
+    const yr = +r.YEAR;
+    const wab = pFloat(r['WAB RANK']);
+    const elo = pFloat(r['ELO']);
+    const q1q2 = pFloat(r['Q1 PLUS Q2 W']);
+    const q3q4 = pFloat(r['Q3 Q4 L']);
+    if (wab !== null)  set(r.TEAM, yr, 'wab_rank', wab);
+    if (elo !== null)  set(r.TEAM, yr, 'elo', elo);
+    if (q1q2 !== null) set(r.TEAM, yr, 'q1q2_wins', q1q2);
+    if (q3q4 !== null) set(r.TEAM, yr, 'q3q4_losses', q3q4);
+  }
+  for (const r of CSV.rppfPre) {
+    const v = pFloat(r['RPPF RATING CHANGE']);
+    if (v !== null) set(r.TEAM, +r.YEAR, 'rppf_improve', v);
+  }
+  // AP Poll: aggregate to max-week (final poll) per team/year
+  const apMaxWeek = {};
+  for (const r of CSV.appoll) {
+    const yr = +r.YEAR;
+    const wk = +r.WEEK;
+    const k = normName(r.TEAM) + '|' + yr;
+    if (!apMaxWeek[k] || wk > apMaxWeek[k].week) {
+      apMaxWeek[k] = { week: wk, votes: pFloat(r['AP VOTES']), team: r.TEAM, year: yr };
+    }
+  }
+  for (const entry of Object.values(apMaxWeek)) {
+    if (entry.votes !== null) set(entry.team, entry.year, 'ap_votes', entry.votes);
+  }
+  // Team Results: aggregate (no year dimension) — store as pedigree
+  const TEAM_PEDIGREE = {};
+  for (const r of CSV.teamresults) {
+    const wp = pFloat(r['WIN%']);
+    if (wp !== null) TEAM_PEDIGREE[normName(r.TEAM)] = wp;
+  }
+  // Attach pedigree to TEAM_MAP for all team-years
+  for (const teamKey of Object.keys(TEAM_MAP)) {
+    const ped = TEAM_PEDIGREE[teamKey];
+    if (ped !== undefined) {
+      for (const yr of Object.keys(TEAM_MAP[teamKey])) {
+        TEAM_MAP[teamKey][yr].pedigree = ped;
+      }
+    }
+  }
 }
 
 function buildYearNorms() {
-  // Collect all years from kenpom
-  const years = new Set(CSV.kenpom.map(r => +r.YEAR));
+  // Collect all years from all data sources
+  const years = new Set();
+  CSV.kenpom.forEach(r => years.add(+r.YEAR));
   CSV.rppf.forEach(r => years.add(+r.YEAR));
+  CSV.heatcheck.forEach(r => years.add(+r.YEAR));
+  CSV.kenpomPre.forEach(r => years.add(+r.YEAR));
+  CSV.resumes.forEach(r => years.add(+r.YEAR));
+  CSV.rppfPre.forEach(r => years.add(+r.YEAR));
+  CSV.appoll.forEach(r => years.add(+r.YEAR));
 
   for (const y of years) {
-    YEAR_NORMS[y] = Array.from({length: N_FEATURES}, () => ({ min: Infinity, max: -Infinity }));
+    YEAR_NORMS[y] = Array.from({length: N_FEATURES}, () => ({ min: Infinity, max: -Infinity, sum: 0, count: 0 }));
   }
 
   const expand = (year, fi, v) => {
     if (!YEAR_NORMS[year]) return;
-    if (v < YEAR_NORMS[year][fi].min) YEAR_NORMS[year][fi].min = v;
-    if (v > YEAR_NORMS[year][fi].max) YEAR_NORMS[year][fi].max = v;
+    const n = YEAR_NORMS[year][fi];
+    if (v < n.min) n.min = v;
+    if (v > n.max) n.max = v;
+    n.sum += v;
+    n.count++;
   };
 
+  // Features 0-7: original
   for (const r of CSV.kenpom) {
     const v = pFloat(r['BADJ EM']); if (v !== null) expand(+r.YEAR, 0, v);
   }
@@ -1021,6 +1095,39 @@ function buildYearNorms() {
   for (const r of CSV.publicpicks) {
     const v = pFloat(r['R64']); if (v !== null) expand(+r.YEAR, 7, v);
   }
+  // Features 8-16: new data sources
+  for (const r of CSV.heatcheck) {
+    const v = pFloat(r['POWER']); if (v !== null) expand(+r.YEAR, 8, v);
+  }
+  for (const r of CSV.kenpomPre) {
+    const v = pFloat(r['KADJ EM CHANGE']); if (v !== null) expand(+r.YEAR, 9, v);
+  }
+  for (const r of CSV.resumes) {
+    const yr = +r.YEAR;
+    const wab = pFloat(r['WAB RANK']); if (wab !== null) expand(yr, 10, -wab); // inverted: lower rank = better
+    const elo = pFloat(r['ELO']); if (elo !== null) expand(yr, 11, elo);
+    const q1q2 = pFloat(r['Q1 PLUS Q2 W']); if (q1q2 !== null) expand(yr, 12, q1q2);
+    const q3q4 = pFloat(r['Q3 Q4 L']); if (q3q4 !== null) expand(yr, 13, -q3q4); // negated: fewer bad losses = better
+  }
+  // AP votes: use aggregated data from TEAM_MAP
+  for (const teamKey of Object.keys(TEAM_MAP)) {
+    for (const [yr, metrics] of Object.entries(TEAM_MAP[teamKey])) {
+      if (metrics.ap_votes !== undefined) expand(+yr, 14, metrics.ap_votes);
+    }
+  }
+  for (const r of CSV.rppfPre) {
+    const v = pFloat(r['RPPF RATING CHANGE']); if (v !== null) expand(+r.YEAR, 15, v);
+  }
+  // Feature 16: pedigree (team win%) — use global min/max across all teams
+  for (const teamKey of Object.keys(TEAM_MAP)) {
+    for (const [yr, metrics] of Object.entries(TEAM_MAP[teamKey])) {
+      if (metrics.pedigree !== undefined) expand(+yr, 16, metrics.pedigree);
+    }
+  }
+  // Feature 17: seed diff — normalized separately in featureVec, but set reasonable range
+  for (const y of years) {
+    YEAR_NORMS[y][17] = { min: -15, max: 15, sum: 0, count: 1 }; // seed diff range
+  }
 }
 
 function buildSeedRates() {
@@ -1035,7 +1142,7 @@ function getTeamMetrics(name, preferYear) {
   const k = normName(name);
   if (!TEAM_MAP[k]) return null;
   const avail = Object.keys(TEAM_MAP[k]).map(Number)
-    .filter(y => y >= 2016 && y <= 2025)
+    .filter(y => y >= 2008 && y <= 2025)
     .sort((a,b) => b - a);
   if (!avail.length) return null;
   // Prefer most recent year ≤ preferYear (or 2025)
@@ -1044,25 +1151,43 @@ function getTeamMetrics(name, preferYear) {
   return { year: yr, ...TEAM_MAP[k][yr] };
 }
 
-function featureVec(teamName, preferYear) {
+function featureVec(teamName, preferYear, seedVal) {
   const m = getTeamMetrics(teamName, preferYear);
   const yr = m ? m.year : 2025;
   const norms = YEAR_NORMS[yr] || YEAR_NORMS[2025] || [];
 
+  // Compute per-year mean for missing value imputation
+  const getMean = (i) => {
+    const n = norms[i];
+    if (!n || n.count === 0 || n.min === Infinity) return 50;
+    return normVal(n.sum / n.count, n.min, n.max);
+  };
+
   const raw = [
-    m ? (m.badj_em       ?? null) : null,
-    m ? (m.rppf          ?? null) : null,
-    m ? (m.z_rating      ?? null) : null,
-    m ? (m.power538      ?? null) : null,
-    m ? (m.relative_evan ?? null) : null,
-    m && m.net !== undefined ? -m.net : null,
-    m && m.kpi !== undefined ? -m.kpi : null,
-    m ? (m.public_r64    ?? null) : null
+    m ? (m.badj_em         ?? null) : null,   // 0
+    m ? (m.rppf            ?? null) : null,   // 1
+    m ? (m.z_rating        ?? null) : null,   // 2
+    m ? (m.power538        ?? null) : null,   // 3
+    m ? (m.relative_evan   ?? null) : null,   // 4
+    m && m.net !== undefined ? -m.net : null,  // 5
+    m && m.kpi !== undefined ? -m.kpi : null,  // 6
+    m ? (m.public_r64      ?? null) : null,   // 7
+    m ? (m.hc_power        ?? null) : null,   // 8
+    m ? (m.preseason_improve ?? null) : null, // 9
+    m && m.wab_rank !== undefined ? -m.wab_rank : null, // 10 (inverted)
+    m ? (m.elo             ?? null) : null,   // 11
+    m ? (m.q1q2_wins       ?? null) : null,   // 12
+    m && m.q3q4_losses !== undefined ? -m.q3q4_losses : null, // 13 (negated)
+    m ? (m.ap_votes        ?? null) : null,   // 14
+    m ? (m.rppf_improve    ?? null) : null,   // 15
+    m ? (m.pedigree        ?? null) : null,   // 16
+    null  // 17: seed diff — set externally per-matchup
   ];
 
   return raw.map((v, i) => {
-    if (v === null) return 50;
-    if (!norms[i] || norms[i].min === Infinity) return 50;
+    if (i === 17) return seedVal !== undefined ? seedVal : 0; // seed diff passed in
+    if (v === null) return getMean(i); // use per-year mean instead of 50
+    if (!norms[i] || norms[i].min === Infinity) return getMean(i);
     return normVal(v, norms[i].min, norms[i].max);
   });
 }
@@ -1086,29 +1211,165 @@ function buildTrainingExamples() {
   for (const key of Object.keys(groups)) {
     const rows = groups[key].sort((a,b) => +a['BY YEAR NO'] - +b['BY YEAR NO']);
     const yr = +rows[0].YEAR;
+    const round = +rows[0]['CURRENT ROUND'];
 
     for (let i = 0; i + 1 < rows.length; i += 2) {
       const r1 = rows[i], r2 = rows[i+1];
-      // Verify they're a consecutive pair
       if (Math.abs(+r1['BY YEAR NO'] - +r2['BY YEAR NO']) > 3) continue;
 
       const s1 = pFloat(r1.SCORE), s2 = pFloat(r2.SCORE);
       if (s1 === null || s2 === null || s1 === s2) continue;
 
       const [winner, loser] = s1 > s2 ? [r1, r2] : [r2, r1];
-      const wf = featureVec(winner.TEAM, yr);
-      const lf = featureVec(loser.TEAM, yr);
-      const diff  = wf.map((v, i) => v - lf[i]);
+      const seedW = pFloat(winner.SEED) || 8;
+      const seedL = pFloat(loser.SEED) || 8;
+      const seedDiff = seedL - seedW; // positive means winner had better (lower) seed
+      const seedDiffN = -seedDiff;
+
+      const wf = featureVec(winner.TEAM, yr, seedDiff);
+      const lf = featureVec(loser.TEAM, yr, seedDiffN);
+      const diff  = wf.map((v, fi) => v - lf[fi]);
       const diffN = diff.map(v => -v);
 
-      examples.push({ features: diff,  label: 1 });
-      examples.push({ features: diffN, label: 0 });
+      examples.push({ features: diff,  label: 1, year: yr, round: round });
+      examples.push({ features: diffN, label: 0, year: yr, round: round });
     }
   }
   return examples;
 }
 
-function trainModel() {
+/* --- Reusable logistic regression with Nesterov momentum --- */
+function trainLogistic(X, y, nFeats, iters, lambda) {
+  const w = new Array(nFeats).fill(0);
+  const v = new Array(nFeats).fill(0); // velocity for Nesterov
+  const lr0 = 0.05;
+  const mu = 0.9;
+  const n = X.length;
+
+  for (let iter = 0; iter < iters; iter++) {
+    const lr = lr0 / (1 + iter * 0.002);
+    // Look-ahead position
+    const wLook = w.map((wi, j) => wi - mu * v[j]);
+    const grad = new Array(nFeats).fill(0);
+    for (let i = 0; i < n; i++) {
+      const pred = sigmoid(dot(wLook, X[i]));
+      const err = pred - y[i];
+      for (let j = 0; j < nFeats; j++) {
+        grad[j] += err * X[i][j];
+      }
+    }
+    for (let j = 0; j < nFeats; j++) {
+      v[j] = mu * v[j] + (lr / n) * (grad[j] + lambda * w[j]);
+      w[j] -= v[j];
+    }
+  }
+  return w;
+}
+
+/* --- Round helpers --- */
+function gameRound(id) {
+  if (id.includes('r64')) return 64;
+  if (id.includes('r32')) return 32;
+  if (id.includes('s16')) return 16;
+  if (id.includes('e8'))  return 8;
+  if (id.includes('f4'))  return 4;
+  if (id === 'champ')     return 2;
+  if (id.startsWith('ff')) return 68;
+  return 64;
+}
+
+function roundFromMatchupRound(r) {
+  // Matchup CSV CURRENT ROUND values: 64, 32, 16, 8, 4, 2
+  return r;
+}
+
+function roundEncode(round) {
+  // [isEarly, isMid, isLate]
+  if (round >= 32) return [1, 0, 0]; // R64, R32
+  if (round >= 8)  return [0, 1, 0]; // S16, E8
+  return [0, 0, 1]; // F4, Championship
+}
+
+/* --- Gradient Boosted Decision Stumps --- */
+function trainGradientBoostedStumps(X, y, nStumps, shrinkage) {
+  const n = X.length;
+  const nFeats = X[0].length;
+  const stumps = [];
+  // Initialize predictions to log-odds of mean
+  const meanY = y.reduce((a,b) => a+b, 0) / n;
+  const initPred = Math.log(meanY / (1 - meanY + 1e-10));
+  const F = new Array(n).fill(initPred);
+
+  for (let s = 0; s < nStumps; s++) {
+    // Compute pseudo-residuals (negative gradient of log loss)
+    const residuals = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = sigmoid(F[i]);
+      residuals[i] = y[i] - p;
+    }
+
+    // Find best stump: (feature, threshold, leftPred, rightPred)
+    let bestLoss = Infinity, bestStump = null;
+
+    for (let f = 0; f < nFeats; f++) {
+      // Get sorted unique values for quantile thresholds
+      const vals = X.map(x => x[f]).sort((a,b) => a - b);
+      const nQ = 10;
+      for (let q = 1; q <= nQ; q++) {
+        const idx = Math.floor(q / (nQ + 1) * n);
+        const thresh = vals[Math.min(idx, n-1)];
+
+        let leftSum = 0, leftCount = 0, rightSum = 0, rightCount = 0;
+        for (let i = 0; i < n; i++) {
+          if (X[i][f] <= thresh) { leftSum += residuals[i]; leftCount++; }
+          else { rightSum += residuals[i]; rightCount++; }
+        }
+        if (leftCount === 0 || rightCount === 0) continue;
+
+        const leftPred = leftSum / leftCount;
+        const rightPred = rightSum / rightCount;
+
+        // MSE of residuals
+        let loss = 0;
+        for (let i = 0; i < n; i++) {
+          const pred = X[i][f] <= thresh ? leftPred : rightPred;
+          const diff = residuals[i] - pred;
+          loss += diff * diff;
+        }
+
+        if (loss < bestLoss) {
+          bestLoss = loss;
+          bestStump = { feature: f, threshold: thresh, leftPred, rightPred };
+        }
+      }
+    }
+
+    if (!bestStump) break;
+    stumps.push(bestStump);
+
+    // Update predictions
+    for (let i = 0; i < n; i++) {
+      const pred = X[i][bestStump.feature] <= bestStump.threshold
+        ? bestStump.leftPred : bestStump.rightPred;
+      F[i] += shrinkage * pred;
+    }
+  }
+
+  return { stumps, initPred };
+}
+
+function predictStumps(features, model, shrinkage) {
+  let F = model.initPred;
+  for (const stump of model.stumps) {
+    const pred = features[stump.feature] <= stump.threshold
+      ? stump.leftPred : stump.rightPred;
+    F += shrinkage * pred;
+  }
+  return sigmoid(F);
+}
+
+/* --- Ensemble training --- */
+function trainEnsemble() {
   const examples = buildTrainingExamples();
   TRAINING_COUNT = examples.length;
   if (!examples.length) {
@@ -1116,32 +1377,87 @@ function trainModel() {
     return;
   }
 
-  const w = new Array(N_FEATURES).fill(0);
-  const lr0 = 0.05;
-  const ITERS = 800;
-  const lambda = 0.001;
+  const X = examples.map(e => e.features);
+  const y = examples.map(e => e.label);
   const n = examples.length;
 
-  for (let iter = 0; iter < ITERS; iter++) {
-    const lr = lr0 / (1 + iter * 0.002);
-    const grad = new Array(N_FEATURES).fill(0);
-    for (const ex of examples) {
-      const pred = sigmoid(dot(w, ex.features));
-      const err  = pred - ex.label;
-      for (let j = 0; j < N_FEATURES; j++) {
-        grad[j] += err * ex.features[j];
-      }
-    }
-    for (let j = 0; j < N_FEATURES; j++) {
-      w[j] -= (lr / n) * (grad[j] + lambda * w[j]);
+  // Model 1: Full Logistic Regression (18 features)
+  MODEL_WEIGHTS = trainLogistic(X, y, N_FEATURES, 1500, 0.001);
+
+  // Model 2: Round-Aware Logistic Regression (18 + 3 round features = 21)
+  const X2 = examples.map(e => [...e.features, ...roundEncode(e.round)]);
+  MODEL2_WEIGHTS = trainLogistic(X2, y, N_FEATURES + 3, 1500, 0.001);
+
+  // Model 3: Gradient Boosted Decision Stumps (18 features)
+  MODEL3_STUMPS = trainGradientBoostedStumps(X, y, 20, 0.1);
+
+  MODEL_TRAINED = true;
+
+  console.log(`Ensemble trained: ${n} examples`);
+  console.log('Model 1 weights:', FEATURE_NAMES.map((nm,i) => `${nm}=${MODEL_WEIGHTS[i].toFixed(4)}`).join(', '));
+  console.log(`Model 3: ${MODEL3_STUMPS.stumps.length} stumps`);
+}
+
+/* --- Leave-One-Year-Out Cross-Validation --- */
+async function runCrossValidation() {
+  const allExamples = buildTrainingExamples();
+  if (allExamples.length < 50) { CV_RESULTS = null; return; }
+
+  const years = [...new Set(allExamples.map(e => e.year))].filter(y => y !== 2020).sort();
+  let totalCorrect = 0, totalCount = 0, totalLogLoss = 0;
+  const roundAccuracy = {}; // round → { correct, total }
+
+  for (let yi = 0; yi < years.length; yi++) {
+    const holdoutYear = years[yi];
+    if (holdoutYear === 2025) continue; // keep 2025 for final predictions only
+
+    setLoadingMsg(`Cross-validation: year ${yi + 1} of ${years.length} (${holdoutYear})…`);
+    await tick();
+
+    const trainExamples = allExamples.filter(e => e.year !== holdoutYear);
+    const testExamples  = allExamples.filter(e => e.year === holdoutYear);
+    if (trainExamples.length < 20 || testExamples.length < 2) continue;
+
+    const Xtrain = trainExamples.map(e => e.features);
+    const ytrain = trainExamples.map(e => e.label);
+
+    // Train 3 models on train set
+    const w1 = trainLogistic(Xtrain, ytrain, N_FEATURES, 1500, 0.001);
+    const X2train = trainExamples.map(e => [...e.features, ...roundEncode(e.round)]);
+    const w2 = trainLogistic(X2train, ytrain, N_FEATURES + 3, 1500, 0.001);
+    const m3 = trainGradientBoostedStumps(Xtrain, ytrain, 20, 0.1);
+
+    // Evaluate on test set (only label=1 examples to avoid double-counting)
+    const testPos = testExamples.filter(e => e.label === 1);
+    for (const ex of testPos) {
+      const p1 = sigmoid(dot(w1, ex.features));
+      const f2 = [...ex.features, ...roundEncode(ex.round)];
+      const p2 = sigmoid(dot(w2, f2));
+      const p3 = predictStumps(ex.features, m3, 0.1);
+      const pEns = clamp(0.35 * p1 + 0.30 * p2 + 0.35 * p3, 0.02, 0.98);
+
+      const correct = pEns >= 0.5 ? 1 : 0;
+      totalCorrect += correct;
+      totalCount++;
+      totalLogLoss += -(Math.log(clamp(pEns, 1e-10, 1 - 1e-10)));
+
+      const rd = ex.round;
+      if (!roundAccuracy[rd]) roundAccuracy[rd] = { correct: 0, total: 0 };
+      roundAccuracy[rd].total++;
+      roundAccuracy[rd].correct += correct;
     }
   }
 
-  MODEL_WEIGHTS = w;
-  MODEL_TRAINED = true;
-
-  console.log(`Model trained: ${n} examples, ${ITERS} iterations`);
-  console.log('Weights:', FEATURE_NAMES.map((nm,i) => `${nm}=${w[i].toFixed(4)}`).join(', '));
+  if (totalCount > 0) {
+    CV_RESULTS = {
+      accuracy: totalCorrect / totalCount,
+      logLoss: totalLogLoss / totalCount,
+      totalGames: totalCount,
+      roundAccuracy: roundAccuracy
+    };
+    console.log(`CV Accuracy: ${(CV_RESULTS.accuracy * 100).toFixed(1)}%, Log Loss: ${CV_RESULTS.logLoss.toFixed(4)}, Games: ${totalCount}`);
+    console.log('Per-round:', Object.entries(roundAccuracy).map(([r, v]) => `R${r}: ${(v.correct/v.total*100).toFixed(0)}%`).join(', '));
+  }
 }
 
 /* ===========================================================
@@ -1154,18 +1470,35 @@ function seedMatchupProb(seedA, seedB) {
   return total === 0 ? 0.5 : rA / total;
 }
 
-function predictProb(nameA, seedA, nameB, seedB) {
+function predictProb(nameA, seedA, nameB, seedB, roundVal) {
   if (!nameA || !nameB) return 0.5;
   const isTBD = s => !s || s.includes('Winner') || s.includes('FF');
   if (isTBD(nameA) || isTBD(nameB)) return 0.5;
 
-  const fA = featureVec(nameA, 2025);
-  const fB = featureVec(nameB, 2025);
+  const seedDiff = (seedB || 8) - (seedA || 8); // positive if A has better seed
+  const fA = featureVec(nameA, 2025, seedDiff);
+  const fB = featureVec(nameB, 2025, -seedDiff);
   const diff = fA.map((v,i) => v - fB[i]);
 
-  const modelP = MODEL_TRAINED ? sigmoid(dot(MODEL_WEIGHTS, diff)) : 0.5;
-  const seedP  = seedMatchupProb(seedA, seedB);
-  return clamp(modelP * 0.85 + seedP * 0.15, 0.02, 0.98);
+  if (!MODEL_TRAINED) {
+    const seedP = seedMatchupProb(seedA, seedB);
+    return clamp(seedP, 0.02, 0.98);
+  }
+
+  // Model 1: Full LR
+  const p1 = sigmoid(dot(MODEL_WEIGHTS, diff));
+
+  // Model 2: Round-aware LR
+  const rd = roundVal || 64;
+  const diff2 = [...diff, ...roundEncode(rd)];
+  const p2 = sigmoid(dot(MODEL2_WEIGHTS, diff2));
+
+  // Model 3: GBM stumps
+  const p3 = predictStumps(diff, MODEL3_STUMPS, 0.1);
+
+  // Ensemble blend
+  const finalP = clamp(0.35 * p1 + 0.30 * p2 + 0.35 * p3, 0.02, 0.98);
+  return finalP;
 }
 
 /* ===========================================================
@@ -1205,7 +1538,7 @@ function propagateGameWinner(gameId) {
     const isResolved = n => n && !n.includes('Winner') && !n.includes('TBD');
     if (isResolved(parent.teamA.name) && isResolved(parent.teamB.name)) {
       parent.probA = predictProb(parent.teamA.name, parent.teamA.seed,
-                                 parent.teamB.name, parent.teamB.seed);
+                                 parent.teamB.name, parent.teamB.seed, gameRound(parent.id));
       parent.winner = parent.probA >= 0.5 ? parent.teamA : parent.teamB;
     }
   }
@@ -1237,7 +1570,7 @@ function runFullPrediction() {
     const isResolved = n => n && !n.includes('Winner') && !n.includes('TBD') && !n.includes('FF');
     if (!isResolved(g.teamA.name) || !isResolved(g.teamB.name)) continue;
 
-    g.probA  = predictProb(g.teamA.name, g.teamA.seed, g.teamB.name, g.teamB.seed);
+    g.probA  = predictProb(g.teamA.name, g.teamA.seed, g.teamB.name, g.teamB.seed, gameRound(id));
     g.winner = g.probA >= 0.5 ? g.teamA : g.teamB;
     renderCard(id);
 
@@ -1611,7 +1944,7 @@ function repredictFrom(gameId) {
   if (!g.teamA.name || !g.teamB.name) return;
   if (isTBDName(g.teamA.name) || isTBDName(g.teamB.name)) return;
 
-  g.probA  = predictProb(g.teamA.name, g.teamA.seed, g.teamB.name, g.teamB.seed);
+  g.probA  = predictProb(g.teamA.name, g.teamA.seed, g.teamB.name, g.teamB.seed, gameRound(gameId));
   g.winner = g.probA >= 0.5 ? g.teamA : g.teamB;
   renderCard(gameId);
   propagateGameWinner(gameId);
@@ -1705,7 +2038,13 @@ const CSV_DEFS = [
   { key: 'publicpicks',     file: 'data/Public Picks.csv'      },
   { key: 'seedresults',     file: 'data/Seed Results.csv'      },
   { key: 'teamresults',     file: 'data/Team Results.csv'      },
-  { key: 'matchups',        file: 'data/Tournament Matchups.csv' }
+  { key: 'matchups',        file: 'data/Tournament Matchups.csv' },
+  { key: 'heatcheck',       file: 'data/Heat Check Tournament Index.csv' },
+  { key: 'kenpomPre',       file: 'data/KenPom Preseason.csv'  },
+  { key: 'resumes',         file: 'data/Resumes.csv'           },
+  { key: 'rppfPre',         file: 'data/RPPF Preseason Ratings.csv' },
+  { key: 'appoll',          file: 'data/AP Poll Data.csv'      },
+  { key: 'locations',       file: 'data/Tournament Locations.csv' }
 ];
 
 let loadDone = 0;
@@ -1779,10 +2118,15 @@ async function init() {
   buildYearNorms();
   buildSeedRates();
 
-  // 5. Train model
-  setLoadingMsg('Training logistic regression model…');
+  // 5. Train ensemble model
+  setLoadingMsg('Training 3-model ensemble…');
   await tick();
-  trainModel();
+  trainEnsemble();
+
+  // 5b. Cross-validation
+  setLoadingMsg('Running cross-validation…');
+  await tick();
+  await runCrossValidation();
 
   // 6. Restore saved state OR predict fresh
   const restored = loadState();
@@ -1876,6 +2220,16 @@ function showTooltip(e) {
         ? `<div class="tt-row"><span class="tt-label">KPI</span><span class="tt-val">${fmt(m.kpi, 0)}</span></div>` : ''}
       ${m.public_r64 !== undefined
         ? `<div class="tt-row"><span class="tt-label">Public%</span><span class="tt-val">${fmt(m.public_r64, 1)}%</span></div>` : ''}
+      ${m.hc_power !== undefined
+        ? `<div class="tt-row"><span class="tt-label">HC Power</span><span class="tt-val">${fmt(m.hc_power, 1)}</span></div>` : ''}
+      ${m.elo !== undefined
+        ? `<div class="tt-row"><span class="tt-label">Elo</span><span class="tt-val">${fmt(m.elo, 0)}</span></div>` : ''}
+      ${m.q1q2_wins !== undefined
+        ? `<div class="tt-row"><span class="tt-label">Q1+Q2 W</span><span class="tt-val">${fmt(m.q1q2_wins, 0)}</span></div>` : ''}
+      ${m.ap_votes !== undefined
+        ? `<div class="tt-row"><span class="tt-label">AP Votes</span><span class="tt-val">${fmt(m.ap_votes, 0)}</span></div>` : ''}
+      ${m.pedigree !== undefined
+        ? `<div class="tt-row"><span class="tt-label">Pedigree</span><span class="tt-val">${fmt(m.pedigree, 1)}%</span></div>` : ''}
       <div style="margin-top:5px;font-size:0.6rem;color:#4a5a7a;">Data year: ${m.year}</div>`;
 
     TOOLTIP_EL.style.display = 'block';
@@ -1918,34 +2272,69 @@ function buildModelPanel() {
   panel.style.cssText = `
     background: #0e1b33;
     border-top: 1px solid #1e2e4a;
-    padding: 8px 20px;
-    display: flex; gap: 16px; align-items: center;
+    padding: 10px 20px;
     font-size: 0.65rem; color: #8a9bb5;
-    flex-wrap: wrap; overflow: hidden;
-    max-height: 0; transition: max-height 0.4s ease;
+    overflow: hidden;
+    max-height: 0; transition: max-height 0.5s ease;
   `;
 
+  // Model info summary
+  const cvInfo = CV_RESULTS
+    ? `CV Accuracy: <span style="color:#4acc88;font-weight:600;">${(CV_RESULTS.accuracy * 100).toFixed(1)}%</span>
+       · Log Loss: <span style="color:#e8be3a;font-weight:600;">${CV_RESULTS.logLoss.toFixed(3)}</span>
+       · ${CV_RESULTS.totalGames} holdout games`
+    : 'Cross-validation: not available';
+
+  // Per-round accuracy mini-table
+  let roundTable = '';
+  if (CV_RESULTS && CV_RESULTS.roundAccuracy) {
+    const rounds = Object.keys(CV_RESULTS.roundAccuracy).sort((a,b) => +b - +a);
+    roundTable = '<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">' +
+      rounds.map(r => {
+        const ra = CV_RESULTS.roundAccuracy[r];
+        const pct = (ra.correct / ra.total * 100).toFixed(0);
+        return `<span style="background:#1a2744;padding:2px 6px;border-radius:3px;">R${r}: <b style="color:#4acc88;">${pct}%</b> <span style="color:#4a5a7a;">(${ra.total})</span></span>`;
+      }).join('') + '</div>';
+  }
+
+  // Feature importance bars (sorted by absolute weight) — compact 3-column grid
   const wMax = Math.max(...MODEL_WEIGHTS.map(Math.abs));
-  const bars = MODEL_WEIGHTS.map((w, i) => {
-    const pct = wMax > 0 ? Math.round(Math.abs(w) / wMax * 60) : 0;
-    const col  = w >= 0 ? '#4acc88' : '#e06060';
-    return `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
-      <span style="color:#4a5a7a;min-width:72px;">${FEATURE_NAMES[i]}</span>
-      <div style="width:${pct}px;height:6px;background:${col};border-radius:3px;"></div>
-      <span style="color:${col};font-weight:600;">${w >= 0 ? '+' : ''}${w.toFixed(3)}</span>
+  const indexed = MODEL_WEIGHTS.map((w, i) => ({ w, i, name: FEATURE_NAMES[i] }));
+  indexed.sort((a, b) => Math.abs(b.w) - Math.abs(a.w));
+  const bars = indexed.map(({ w, name }) => {
+    const pct = wMax > 0 ? Math.round(Math.abs(w) / wMax * 40) : 0;
+    const col = w >= 0 ? '#4acc88' : '#e06060';
+    return `<div style="display:flex;align-items:center;gap:3px;white-space:nowrap;">
+      <span style="color:#4a5a7a;width:68px;font-size:0.58rem;text-align:right;flex-shrink:0;">${name}</span>
+      <div style="width:${pct}px;height:4px;background:${col};border-radius:2px;min-width:1px;"></div>
+      <span style="color:${col};font-weight:600;font-size:0.55rem;">${w >= 0 ? '+' : ''}${w.toFixed(3)}</span>
     </div>`;
   }).join('');
 
   panel.innerHTML = `
-    <span style="color:#d4a017;font-weight:600;white-space:nowrap;">Model Weights</span>
-    ${bars}
-    <span style="color:#4a5a7a;margin-left:auto;">${TRAINING_COUNT} training examples · 150 iterations · lr=0.01</span>`;
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+      <div style="min-width:180px;">
+        <div style="color:#d4a017;font-weight:700;font-size:0.72rem;margin-bottom:3px;">3-Model Ensemble</div>
+        <div style="color:#8a9bb5;line-height:1.6;font-size:0.62rem;">
+          LR (18) + Round-LR (21) + GBStumps (${MODEL3_STUMPS.stumps.length})<br>
+          17 sources · 2008–2025 · ${TRAINING_COUNT} examples<br>
+          ${cvInfo}
+        </div>
+        ${roundTable}
+      </div>
+      <div style="flex:1;min-width:300px;">
+        <div style="color:#d4a017;font-weight:600;margin-bottom:3px;font-size:0.62rem;">Feature Importance</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px 12px;">
+          ${bars}
+        </div>
+      </div>
+    </div>`;
 
   // Insert panel below first-four section
   const ff = document.getElementById('first-four-section');
   ff.parentNode.insertBefore(panel, ff.nextSibling);
 
-  requestAnimationFrame(() => { panel.style.maxHeight = '80px'; });
+  requestAnimationFrame(() => { panel.style.maxHeight = '200px'; });
 }
 
 /* ===========================================================
