@@ -231,10 +231,31 @@ body {
 .bracket-half {
   display: flex;
   flex-direction: column;
+  gap: 0;
+}
+.region-divider {
+  width: 100%;
+  margin: 0;
+  border: none;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.region-divider::before {
+  content: '';
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  top: 50%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  opacity: 0.5;
 }
 .region-wrapper {
   display: flex;
-  height: 512px;
+  height: 620px;
   position: relative;
 }
 .region-label-strip {
@@ -260,7 +281,7 @@ body {
   justify-content: space-around;
   align-items: center;
   width: 156px;
-  height: 512px;
+  height: 620px;
   flex-shrink: 0;
 }
 .round-col.col-e8 { width: 156px; }
@@ -651,6 +672,8 @@ body {
         <div class="round-col col-e8" id="e-e8"></div>
       </div>
 
+      <div class="region-divider"></div>
+
       <!-- SOUTH REGION -->
       <div class="region-wrapper" id="south-wrapper">
         <div class="region-label-strip">SOUTH</div>
@@ -685,6 +708,8 @@ body {
         <div class="round-col" id="mw-r64"></div>
         <div class="region-label-strip right-label">MIDWEST</div>
       </div>
+
+      <div class="region-divider"></div>
 
       <!-- WEST REGION -->
       <div class="region-wrapper" id="west-wrapper">
