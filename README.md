@@ -14,7 +14,7 @@ python3 -m http.server 8080
 
 ## Features
 
-- **ML predictions** — logistic regression (150 iterations) trained on ~900 historical tournament games across 8 rating systems: KenPom/Barttorvik, RPPF, Z-Rating, 538, EvanMiya, Teamsheet (NET/KPI), and Public Picks
+- **ML predictions** — logistic regression (800 iterations, L2 regularization, learning rate decay) trained on ~900 historical tournament games across 8 rating systems: KenPom/Barttorvik, RPPF, Z-Rating, 538, EvanMiya, Teamsheet (NET/KPI), and Public Picks
 - **Full 68-team bracket** — all 4 First Four games wired into the correct R64 slots
 - **Real-time corrections** — click "Wrong" on any game, pick the actual winner, and all downstream predictions update automatically
 - **Win probability bars** — each game card shows a gold probability bar with percentage
@@ -46,7 +46,7 @@ Features used (difference between team A and team B, normalized 0–100 per year
 - `ΔKPI_INV` — KPI rank (inverted)
 - `ΔPUBLIC_R64` — public R64 pick percentage
 
-Win probability: `0.8 × model_sigmoid + 0.2 × seed_history_rate`, clamped to [2%, 98%].
+Win probability: `0.85 × model_sigmoid + 0.15 × seed_history_rate`, clamped to [2%, 98%].
 
 ## 2026 Bracket
 
@@ -59,3 +59,7 @@ Win probability: `0.8 × model_sigmoid + 0.2 × seed_history_rate`, clamped to [
 **Regions:** East (Washington D.C.) · South (Houston) · Midwest (Chicago) · West (San Jose)
 
 **Final Four pairings:** East vs South · Midwest vs West
+
+## Data Attribution
+
+Tournament and team rating datasets (2008–2026) sourced from [Nishaan Amin's March Madness Data](https://www.kaggle.com/datasets/nishaanamin/march-madness-data) on Kaggle. Includes 38 CSV files covering KenPom, Barttorvik, EvanMiya, RPPF, 538, TeamRankings, and more. Licensed under CC0: Public Domain.

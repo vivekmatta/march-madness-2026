@@ -1092,11 +1092,13 @@ function trainModel() {
   }
 
   const w = new Array(N_FEATURES).fill(0);
-  const lr = 0.01;
-  const ITERS = 150;
+  const lr0 = 0.05;
+  const ITERS = 800;
+  const lambda = 0.001;
   const n = examples.length;
 
   for (let iter = 0; iter < ITERS; iter++) {
+    const lr = lr0 / (1 + iter * 0.002);
     const grad = new Array(N_FEATURES).fill(0);
     for (const ex of examples) {
       const pred = sigmoid(dot(w, ex.features));
@@ -1106,7 +1108,7 @@ function trainModel() {
       }
     }
     for (let j = 0; j < N_FEATURES; j++) {
-      w[j] -= (lr / n) * grad[j];
+      w[j] -= (lr / n) * (grad[j] + lambda * w[j]);
     }
   }
 
@@ -1138,7 +1140,7 @@ function predictProb(nameA, seedA, nameB, seedB) {
 
   const modelP = MODEL_TRAINED ? sigmoid(dot(MODEL_WEIGHTS, diff)) : 0.5;
   const seedP  = seedMatchupProb(seedA, seedB);
-  return clamp(modelP * 0.8 + seedP * 0.2, 0.02, 0.98);
+  return clamp(modelP * 0.85 + seedP * 0.15, 0.02, 0.98);
 }
 
 /* ===========================================================
@@ -1305,6 +1307,30 @@ function renderCard(id) {
   if (g.winner && g.state === 'pending') {
     el.classList.add('animate-win');
     setTimeout(() => el.classList.remove('animate-win'), 2000);
+  }
+
+  // Upset dot indicator
+  if (g.winner && g.winner.seed) {
+    const loser = g.winner === g.teamA ? g.teamB : g.teamA;
+    if (loser && loser.seed) {
+      const upsetClass = getUpsetClass(g.winner.seed, loser.seed);
+      if (upsetClass) {
+        const winRow = el.querySelector('.row-winner .team-name');
+        if (winRow && !winRow.querySelector('.upset-dot')) {
+          const dot = document.createElement('span');
+          dot.className = 'upset-dot';
+          dot.title = upsetClass === 'upset-major' ? 'Major Upset!' : 'Upset';
+          dot.style.cssText = `
+            display:inline-block; width:6px; height:6px;
+            border-radius:50%; margin-left:4px; flex-shrink:0;
+            background: ${upsetClass === 'upset-major' ? '#ff9933' : '#ffcc44'};
+            box-shadow: 0 0 4px ${upsetClass === 'upset-major' ? '#ff993380' : '#ffcc4480'};
+            vertical-align:middle;
+          `;
+          winRow.after(dot);
+        }
+      }
+    }
   }
 }
 
@@ -1935,38 +1961,6 @@ function getUpsetClass(seedWinner, seedLoser) {
   if (diff >= 10) return 'upset-major';
   if (diff >= 6)  return 'upset-minor';
   return '';
-}
-
-/* ===========================================================
-   ENHANCED RENDER: Add upset indicator
-   =========================================================== */
-const _originalRenderCard = renderCard;
-function renderCard(id) {
-  _originalRenderCard(id);
-  // Add upset dot if applicable
-  const g = GAMES[id];
-  if (!g || !g.winner) return;
-  const loser = g.winner === g.teamA ? g.teamB : g.teamA;
-  if (!loser || !loser.seed) return;
-  const upsetClass = getUpsetClass(g.winner.seed, loser.seed);
-  if (!upsetClass) return;
-  const card = document.getElementById(`card-${id}`);
-  if (!card) return;
-  // Add a small indicator to winner row
-  const winRow = card.querySelector('.row-winner .team-name');
-  if (winRow && !winRow.querySelector('.upset-dot')) {
-    const dot = document.createElement('span');
-    dot.className = 'upset-dot';
-    dot.title = upsetClass === 'upset-major' ? 'Major Upset!' : 'Upset';
-    dot.style.cssText = `
-      display:inline-block; width:6px; height:6px;
-      border-radius:50%; margin-left:4px; flex-shrink:0;
-      background: ${upsetClass === 'upset-major' ? '#ff9933' : '#ffcc44'};
-      box-shadow: 0 0 4px ${upsetClass === 'upset-major' ? '#ff993380' : '#ffcc4480'};
-      vertical-align:middle;
-    `;
-    winRow.after(dot);
-  }
 }
 
 /* ===========================================================
